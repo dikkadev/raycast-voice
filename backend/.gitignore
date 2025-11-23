@@ -1,0 +1,15 @@
+# Backend dependencies and environment
+*.pyc
+__pycache__/
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Whisper model cache
+.cache/
+
+# Temporary audio files
+*.wav
+*.mp3
+*.m4a

@@ -11,17 +11,37 @@
       "title": "transcribe",
       "description": "Starts recoding audio",
       "mode": "view",
-      "subtitle": "Strart transcription"
+      "subtitle": "Strart transcription",
+      "preferences": [
+        {
+          "name": "backendDirectory",
+          "type": "directory",
+          "title": "Backend Directory",
+          "description": "Path to the Python backend (folder containing transcription_server.py and pyproject.toml)",
+          "required": true
+        },
+        {
+          "name": "serverPort",
+          "type": "textfield",
+          "title": "Server Port",
+          "description": "Port for the local Whisper server (default: 51234)",
+          "placeholder": "51234"
+        }
+      ]
     }
   ],
   "dependencies": {
     "@raycast/api": "^1.103.0",
-    "@raycast/utils": "^2.2.1"
+    "@raycast/utils": "^2.2.1",
+    "axios": "^1.7.9",
+    "execa": "^9.6.0",
+    "tmp": "^0.2.3"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^2.0.4",
     "@types/node": "22.13.10",
     "@types/react": "19.0.10",
+    "@types/tmp": "^0.2.6",
     "eslint": "^9.22.0",
     "prettier": "^3.5.3",
     "typescript": "^5.8.2"
