@@ -16,6 +16,17 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 
 ---
 
+## 🐛 Bugs to Research and Fix
+
+### Critical Issues
+- [ ] **Recording cancellation state bug** - When cancelling a recording with Escape and then starting a new recording, the UI appears correct but still contains old text/audio from the previous recording. The frontend `reset()` function clears UI state but doesn't properly stop the backend recording, causing leftover state when starting a new recording. Need to investigate and fix the cancellation flow to ensure backend recording is properly stopped and state is fully cleared.
+
+### Known Issues
+- [ ] **No download progress** - First model download shows no progress indicator
+- [ ] **Keyboard state bug (Control key stuck)** - After transcribing and using Control+Enter to paste, the system appears to think the Control key is still pressed down. This causes keyboard input issues until the user manually resets the keyboard state (e.g., by pressing Control again). May be related to Raycast's keyboard handling, clipboard operations, or system-level keyboard state management. Needs investigation to determine if it's an extension issue, Raycast issue, or Windows system issue.
+
+---
+
 ## ✅ Implemented Features
 
 ### Core Functionality
@@ -32,6 +43,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Recording states** - Visual feedback for: idle, checking, starting, recording, processing, done, error
 - [x] **Config display** - Shows current model and device
 - [x] **Action panel** - Context-aware actions based on current state
+- [x] **Recording timer** - Elapsed time indicator while capturing audio
 
 ### Actions Available
 - [x] **Copy** - Copies transcription text to clipboard
@@ -41,6 +53,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Restart Server** - Restart server with updated config
 - [x] **Open Preferences** - Quick access to extension settings
 - [x] **Enter key to stop** - Primary action triggered on Enter
+- [x] **Edit transcription** - Modify text before copying or pasting
 
 ### Backend Features
 - [x] **CUDA support** - GPU acceleration using NVIDIA CUDA
@@ -64,17 +77,23 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 ## ❌ Not Implemented / TODO
 
 ### User Experience Improvements
-- [ ] **Recording timer** - Show elapsed recording time during capture
 - [ ] **Audio level indicator** - Visual feedback of microphone input level
-- [ ] **Silence detection** - Auto-stop after period of silence (optional)
 - [ ] **Recording history** - Save/access previous transcriptions
-- [ ] **Export options** - Save transcriptions to file (txt, markdown, etc.)
-- [ ] **Edit transcription** - Edit text before copying/pasting
+- [ ] **Auto-action after transcription** - Option to automatically execute an action (e.g., paste, copy) when transcription completes. Default: none. E.g. If set to "paste", it behaves as if the user clicked paste immediately after finishing transcription.
 
 ### Error Handling & Robustness
 - [ ] **Better error messages** - More specific error handling and user-friendly messages
 - [ ] **Model download progress** - Show progress during initial model download
 - [ ] **Server crash recovery** - Auto-restart server if it crashes
+
+---
+
+## 🔮 Future Features
+
+These are ideas and enhancements that are not part of the current development scope. They represent potential future directions for the extension but are not planned for immediate implementation. These features may require significant architectural changes, additional dependencies, or external services, and are documented here for future reference and planning purposes.
+
+### Post-Transcription LLM Processing
+- [ ] **LLM-based text transformation** - Pipe transcription output through an LLM to perform intelligent transformations. For example, when user says "open parentheses", the LLM would transform it to "(" instead of the literal text. This would enable natural voice commands for punctuation, symbols, and formatting that users actually want in their text.
 
 ---
 
@@ -129,13 +148,6 @@ All configuration is done via Raycast Extension Preferences (no environment vari
 | Auto-start Recording | Checkbox | ✓ On | Start recording when command opens |
 | Whisper Model | Dropdown | Base | Model size (tiny/base/small/medium/large) |
 | Compute Device | Dropdown | CUDA | GPU (CUDA) or CPU |
-
----
-
-## 🐛 Known Issues
-
-1. **No download progress** - First model download shows no progress indicator
-2. **No recording timer** - No visual elapsed time during recording
 
 ---
 
