@@ -62,6 +62,15 @@
             { "title": "CUDA (GPU - recommended)", "value": "cuda" },
             { "title": "CPU (slower, no GPU needed)", "value": "cpu" }
           ]
+        },
+        {
+          "name": "returnToRoot",
+          "type": "checkbox",
+          "title": "Return to Root After Action",
+          "label": "Close Raycast after copy or paste",
+          "description": "When enabled, finishing actions (Copy/Paste) automatically pop back to the root search.",
+          "default": false,
+          "required": false
         }
       ]
     }

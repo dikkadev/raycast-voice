@@ -1,8 +1,8 @@
-import { Action, ActionPanel, Detail, Icon, Clipboard, showToast, Toast, openExtensionPreferences, Keyboard } from "@raycast/api";
+import { Action, ActionPanel, Detail, Icon, Clipboard, showToast, Toast, openExtensionPreferences, Keyboard, popToRoot } from "@raycast/api";
 import { useEffect, useState, useRef } from "react";
 import { startBackendRecording, stopRecordingAndTranscribe } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
-import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE } from "./config";
+import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT } from "./config";
 
 enum State {
   IDLE = "idle",
@@ -113,14 +113,22 @@ export default function Command() {
     setDuration(0);
   };
 
+  const maybeReturnToRoot = async () => {
+    if (RETURN_TO_ROOT) {
+      await popToRoot({ clearSearchBar: true });
+    }
+  };
+
   const copy = async () => {
     await Clipboard.copy(transcription);
     await showToast({ style: Toast.Style.Success, title: "Copied" });
+    await maybeReturnToRoot();
   };
 
   const paste = async () => {
     await Clipboard.paste(transcription);
     await showToast({ style: Toast.Style.Success, title: "Pasted" });
+    await maybeReturnToRoot();
   };
 
   // Clean, minimal markdown

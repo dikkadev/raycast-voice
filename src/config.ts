@@ -12,6 +12,7 @@ export interface TranscribePreferences {
   autoStart?: boolean;
   whisperModel?: string;
   computeDevice?: string;
+  returnToRoot?: boolean;
 }
 
 /**
@@ -25,6 +26,7 @@ export function getConfig(): TranscribePreferences {
     autoStart: prefs.autoStart ?? true,
     whisperModel: prefs.whisperModel || "base",
     computeDevice: prefs.computeDevice || "cuda",
+    returnToRoot: prefs.returnToRoot ?? false,
   };
 }
 
@@ -45,6 +47,9 @@ export const COMPUTE_DEVICE = config.computeDevice || "cuda";
 
 // Auto-start preference
 export const AUTO_START = config.autoStart ?? true;
+
+// Return to root preference
+export const RETURN_TO_ROOT = config.returnToRoot ?? false;
 
 /**
  * Parse port with fallback
