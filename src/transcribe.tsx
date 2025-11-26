@@ -1,4 +1,17 @@
-import { Action, ActionPanel, Detail, Icon, Clipboard, showToast, Toast, openExtensionPreferences, Keyboard, popToRoot } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Detail,
+  Icon,
+  Clipboard,
+  showToast,
+  Toast,
+  openExtensionPreferences,
+  Keyboard,
+  popToRoot,
+  Form,
+  useNavigation,
+} from "@raycast/api";
 import { useEffect, useState, useRef } from "react";
 import { startBackendRecording, stopRecordingAndTranscribe } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
@@ -14,6 +27,15 @@ enum State {
   ERROR = "error",
 }
 
+const formatElapsed = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const secs = (safeSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${secs}`;
+};
+
 export default function Command() {
   const pasteShortcut: Keyboard.Shortcut = { modifiers: ["shift"], key: "enter" };
 
@@ -23,7 +45,10 @@ export default function Command() {
   const [language, setLanguage] = useState("");
   const [duration, setDuration] = useState(0);
   const [serverInfo, setServerInfo] = useState<ServerStatus | null>(null);
+  const [recordingStart, setRecordingStart] = useState<number | null>(null);
+  const [recordingElapsed, setRecordingElapsed] = useState(0);
   const hasStarted = useRef(false);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize on mount
   useEffect(() => {
@@ -36,6 +61,24 @@ export default function Command() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (state === State.RECORDING && recordingStart) {
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingElapsed((Date.now() - recordingStart) / 1000);
+      }, 200);
+    } else if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    };
+  }, [state, recordingStart]);
 
   const checkServer = async () => {
     setState(State.CHECKING);
@@ -58,6 +101,8 @@ export default function Command() {
       setServerInfo(status);
 
       setState(State.RECORDING);
+      setRecordingStart(Date.now());
+      setRecordingElapsed(0);
       await startBackendRecording();
 
       await showToast({ style: Toast.Style.Success, title: "Recording", message: "Speak now..." });
@@ -65,6 +110,8 @@ export default function Command() {
       console.error("Failed to start:", err);
       setState(State.ERROR);
       setError(err instanceof Error ? err.message : String(err));
+      setRecordingStart(null);
+      setRecordingElapsed(0);
       await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(err) });
     }
   };
@@ -72,6 +119,8 @@ export default function Command() {
   const stopRecording = async () => {
     try {
       setState(State.PROCESSING);
+      setRecordingStart(null);
+      setRecordingElapsed(0);
       await showToast({ style: Toast.Style.Animated, title: "Transcribing..." });
 
       const result = await stopRecordingAndTranscribe();
@@ -111,6 +160,8 @@ export default function Command() {
     setError("");
     setLanguage("");
     setDuration(0);
+    setRecordingStart(null);
+    setRecordingElapsed(0);
   };
 
   const maybeReturnToRoot = async () => {
@@ -146,7 +197,9 @@ export default function Command() {
         return `## Ready\n\nPress **Enter** to start recording.\n\n${configLine}`;
 
       case State.RECORDING:
-        return `## 🔴 Recording\n\nSpeak now. Press **Enter** when done.`;
+        return `## 🔴 Recording\n\nSpeak now. Press **Enter** when done.${
+          recordingStart !== null ? `\n\n⏱ ${formatElapsed(recordingElapsed)}` : ""
+        }`;
 
       case State.PROCESSING:
         return `## Processing...\n\nTranscribing audio...`;
@@ -190,6 +243,12 @@ export default function Command() {
           <ActionPanel>
             <Action title="Copy" icon={Icon.Clipboard} onAction={copy} />
             <Action title="Paste" icon={Icon.Text} onAction={paste} shortcut={pasteShortcut} />
+            <Action.Push
+              title="Edit Transcription"
+              icon={Icon.Pencil}
+              shortcut={{ modifiers: ["cmd"], key: "e" }}
+              target={<EditTranscriptionForm initialText={transcription} onSave={setTranscription} />}
+            />
             <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["cmd"], key: "n" }} />
             <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
           </ActionPanel>
@@ -210,4 +269,33 @@ export default function Command() {
   };
 
   return <Detail markdown={getMarkdown()} actions={getActions()} />;
+}
+
+type EditTranscriptionFormProps = {
+  initialText: string;
+  onSave: (value: string) => void;
+};
+
+function EditTranscriptionForm({ initialText, onSave }: EditTranscriptionFormProps) {
+  const { pop } = useNavigation();
+
+  const handleSubmit = async (values: { transcription?: string }) => {
+    const updated = values.transcription ?? "";
+    onSave(updated);
+    await showToast({ style: Toast.Style.Success, title: "Transcription updated" });
+    pop();
+  };
+
+  return (
+    <Form
+      navigationTitle="Edit Transcription"
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm title="Save Changes" onSubmit={handleSubmit} />
+        </ActionPanel>
+      }
+    >
+      <Form.TextArea id="transcription" title="Transcription" defaultValue={initialText} autoFocus />
+    </Form>
+  );
 }
