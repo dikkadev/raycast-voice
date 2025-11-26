@@ -13,6 +13,14 @@ export interface TranscriptionResult {
   duration: number;
 }
 
+export interface ServerConfig {
+  model: string;
+  device: string;
+  compute_type: string;
+  host: string;
+  port: number;
+}
+
 /**
  * Start backend microphone recording
  */
@@ -27,6 +35,11 @@ export async function startBackendRecording(): Promise<void> {
     console.error("Failed to start backend recording:", error);
     if (axios.isAxiosError(error)) {
       const message = error.response?.data?.detail || error.message;
+      if (error.response?.status === 400 && message === "Recording already in progress") {
+        // Treat as success – recording is already running
+        console.warn("Recording already in progress, continuing.");
+        return;
+      }
       throw new Error(`Failed to start recording: ${message}`);
     }
     throw error instanceof Error ? error : new Error(String(error));
@@ -56,12 +69,24 @@ export async function stopRecordingAndTranscribe(): Promise<TranscriptionResult>
  * Check server health
  */
 export async function checkHealth(): Promise<boolean> {
-    const healthUrl = `${SERVER_URL}/health`;
+  const healthUrl = `${SERVER_URL}/health`;
+  try {
+    const response = await axios.get(healthUrl, { timeout: 2000 });
+    return response.status === 200 && response.data.status === "healthy";
+  } catch {
+    return false;
+  }
+}
 
-    try {
-        const response = await axios.get(healthUrl, { timeout: 2000 });
-        return response.status === 200 && response.data.status === "healthy";
-    } catch (error) {
-        return false;
-    }
+/**
+ * Get current server configuration
+ */
+export async function getServerConfig(): Promise<ServerConfig | null> {
+  const url = `${SERVER_URL}/config`;
+  try {
+    const response = await axios.get(url, { timeout: 2000 });
+    return response.data as ServerConfig;
+  } catch {
+    return null;
+  }
 }

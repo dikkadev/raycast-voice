@@ -1,31 +1,67 @@
 {
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "voice",
-  "title": "Voice",
-  "description": "Transcribe voice input live",
+  "title": "Voice Transcription",
+  "description": "Quick, high-quality local voice transcription using Whisper",
   "icon": "extension-icon.png",
   "license": "MIT",
   "commands": [
     {
       "name": "transcribe",
-      "title": "transcribe",
-      "description": "Starts recoding audio",
+      "title": "Transcribe Voice",
+      "description": "Record and transcribe voice to text",
       "mode": "view",
-      "subtitle": "Strart transcription",
       "preferences": [
         {
           "name": "backendDirectory",
           "type": "directory",
           "title": "Backend Directory",
-          "description": "Path to the Python backend (folder containing transcription_server.py and pyproject.toml)",
+          "description": "Path to the Python backend folder (contains transcription_server.py)",
           "required": true
         },
         {
           "name": "serverPort",
           "type": "textfield",
           "title": "Server Port",
-          "description": "Port for the local Whisper server (default: 51234)",
-          "placeholder": "51234"
+          "description": "Port for the local Whisper server",
+          "default": "51234",
+          "required": false
+        },
+        {
+          "name": "autoStart",
+          "type": "checkbox",
+          "title": "Auto-start Recording",
+          "label": "Start recording immediately when command opens",
+          "description": "When enabled, recording starts automatically. Disable to manually start.",
+          "default": true,
+          "required": false
+        },
+        {
+          "name": "whisperModel",
+          "type": "dropdown",
+          "title": "Whisper Model",
+          "description": "Model size affects accuracy and speed. Larger = more accurate but slower.",
+          "default": "base",
+          "required": false,
+          "data": [
+            { "title": "Tiny (fastest, least accurate)", "value": "tiny" },
+            { "title": "Base (fast, good accuracy)", "value": "base" },
+            { "title": "Small (balanced)", "value": "small" },
+            { "title": "Medium (slower, better accuracy)", "value": "medium" },
+            { "title": "Large (slowest, best accuracy)", "value": "large-v3" }
+          ]
+        },
+        {
+          "name": "computeDevice",
+          "type": "dropdown",
+          "title": "Compute Device",
+          "description": "Use CUDA for GPU acceleration (recommended) or CPU as fallback",
+          "default": "cuda",
+          "required": false,
+          "data": [
+            { "title": "CUDA (GPU - recommended)", "value": "cuda" },
+            { "title": "CPU (slower, no GPU needed)", "value": "cpu" }
+          ]
         }
       ]
     }
@@ -59,6 +95,6 @@
     "Windows"
   ],
   "categories": [
-    "Other"
+    "Productivity"
   ]
 }

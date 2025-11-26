@@ -1,244 +1,204 @@
-import { Action, ActionPanel, Detail, Icon, Clipboard, showToast, Toast, environment } from "@raycast/api";
+import { Action, ActionPanel, Detail, Icon, Clipboard, showToast, Toast, openExtensionPreferences, Keyboard } from "@raycast/api";
 import { useEffect, useState, useRef } from "react";
 import { startBackendRecording, stopRecordingAndTranscribe } from "./transcription-client";
-import { ensureServerRunning, isServerRunning } from "./server-manager";
+import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
+import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE } from "./config";
 
-enum RecordingState {
+enum State {
   IDLE = "idle",
-  CHECKING_SERVER = "checking_server",
-  STARTING_SERVER = "starting_server",
+  CHECKING = "checking",
+  STARTING = "starting",
   RECORDING = "recording",
   PROCESSING = "processing",
-  COMPLETED = "completed",
+  DONE = "done",
   ERROR = "error",
 }
 
 export default function Command() {
-  const [state, setState] = useState<RecordingState>(RecordingState.IDLE);
-  const [transcription, setTranscription] = useState<string>("");
-  const [error, setError] = useState<string>("");
-  const [language, setLanguage] = useState<string>("");
-  const [duration, setDuration] = useState<number>(0);
-  const hasStartedRecording = useRef(false);
+  const pasteShortcut: Keyboard.Shortcut = { modifiers: ["shift"], key: "enter" };
 
-  // Check server status on mount and auto-start recording
+  const [state, setState] = useState<State>(State.IDLE);
+  const [transcription, setTranscription] = useState("");
+  const [error, setError] = useState("");
+  const [language, setLanguage] = useState("");
+  const [duration, setDuration] = useState(0);
+  const [serverInfo, setServerInfo] = useState<ServerStatus | null>(null);
+  const hasStarted = useRef(false);
+
+  // Initialize on mount
   useEffect(() => {
-    if (!hasStartedRecording.current) {
-      hasStartedRecording.current = true;
-      checkServerAndStartRecording();
+    if (!hasStarted.current) {
+      hasStarted.current = true;
+      if (AUTO_START) {
+        checkAndRecord();
+      } else {
+        checkServer();
+      }
     }
   }, []);
 
-  const checkServerAndStartRecording = async () => {
-    setState(RecordingState.CHECKING_SERVER);
-    const running = await isServerRunning();
-    if (!running) {
-      await showToast({
-        style: Toast.Style.Animated,
-        title: "Server not running",
-        message: "Starting server...",
-      });
-    }
-    // Auto-start recording
-    await startRecording();
+  const checkServer = async () => {
+    setState(State.CHECKING);
+    const status = await getServerStatus();
+    setServerInfo(status);
+    setState(State.IDLE);
   };
 
-  const checkServer = async () => {
-    setState(RecordingState.CHECKING_SERVER);
-    const running = await isServerRunning();
-    if (running) {
-      setState(RecordingState.IDLE);
-      await showToast({
-        style: Toast.Style.Success,
-        title: "Server is ready",
-      });
-    } else {
-      setState(RecordingState.IDLE);
-      await showToast({
-        style: Toast.Style.Animated,
-        title: "Server not running",
-        message: "Will auto-start when recording",
-      });
-    }
+  const checkAndRecord = async () => {
+    setState(State.CHECKING);
+    await startRecording();
   };
 
   const startRecording = async () => {
     try {
-      // Ensure server is running
-      setState(RecordingState.STARTING_SERVER);
-      await showToast({
-        style: Toast.Style.Animated,
-        title: "Starting server...",
-      });
-
+      setState(State.STARTING);
       await ensureServerRunning();
 
-      await showToast({
-        style: Toast.Style.Success,
-        title: "Server ready",
-      });
+      const status = await getServerStatus();
+      setServerInfo(status);
 
-      // Start backend recording
-      setState(RecordingState.RECORDING);
+      setState(State.RECORDING);
       await startBackendRecording();
 
-      await showToast({
-        style: Toast.Style.Success,
-        title: "Recording started",
-        message: "Speak now...",
-      });
+      await showToast({ style: Toast.Style.Success, title: "Recording", message: "Speak now..." });
     } catch (err) {
-      console.error("Failed to start recording:", err);
-      setState(RecordingState.ERROR);
+      console.error("Failed to start:", err);
+      setState(State.ERROR);
       setError(err instanceof Error ? err.message : String(err));
-      await showToast({
-        style: Toast.Style.Failure,
-        title: "Failed to start recording",
-        message: err instanceof Error ? err.message : String(err),
-      });
+      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(err) });
     }
   };
 
   const stopRecording = async () => {
     try {
-      setState(RecordingState.PROCESSING);
-      await showToast({
-        style: Toast.Style.Animated,
-        title: "Processing...",
-      });
+      setState(State.PROCESSING);
+      await showToast({ style: Toast.Style.Animated, title: "Transcribing..." });
 
-      // Stop backend recording and transcribe
       const result = await stopRecordingAndTranscribe();
 
       setTranscription(result.text);
       setLanguage(result.language);
       setDuration(result.duration);
-      setState(RecordingState.COMPLETED);
+      setState(State.DONE);
 
-      await showToast({
-        style: Toast.Style.Success,
-        title: "Transcription complete",
-        message: `${result.text.substring(0, 50)}...`,
-      });
+      await showToast({ style: Toast.Style.Success, title: "Done" });
     } catch (err) {
-      console.error("Failed to process recording:", err);
-      setState(RecordingState.ERROR);
+      console.error("Transcription failed:", err);
+      setState(State.ERROR);
       setError(err instanceof Error ? err.message : String(err));
-      await showToast({
-        style: Toast.Style.Failure,
-        title: "Transcription failed",
-        message: err instanceof Error ? err.message : String(err),
-      });
+      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(err) });
     }
   };
 
-  const cancelRecording = async () => {
+  const handleRestart = async () => {
     try {
-      setState(RecordingState.IDLE);
-      setTranscription("");
-      setError("");
-      await showToast({
-        style: Toast.Style.Success,
-        title: "Recording cancelled",
-      });
+      setState(State.STARTING);
+      await showToast({ style: Toast.Style.Animated, title: "Restarting server..." });
+      await restartServer();
+      const status = await getServerStatus();
+      setServerInfo(status);
+      setState(State.IDLE);
+      await showToast({ style: Toast.Style.Success, title: "Server restarted" });
     } catch (err) {
-      console.error("Failed to cancel recording:", err);
+      setState(State.ERROR);
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
   const reset = () => {
-    setState(RecordingState.IDLE);
+    setState(State.IDLE);
     setTranscription("");
     setError("");
     setLanguage("");
     setDuration(0);
   };
 
-  const copyToClipboard = async () => {
+  const copy = async () => {
     await Clipboard.copy(transcription);
-    await showToast({
-      style: Toast.Style.Success,
-      title: "Copied to clipboard",
-    });
+    await showToast({ style: Toast.Style.Success, title: "Copied" });
   };
 
-  const pasteText = async () => {
+  const paste = async () => {
     await Clipboard.paste(transcription);
-    await showToast({
-      style: Toast.Style.Success,
-      title: "Pasted",
-    });
+    await showToast({ style: Toast.Style.Success, title: "Pasted" });
   };
 
-  // Generate markdown content based on state
-  const getMarkdown = () => {
+  // Clean, minimal markdown
+  const getMarkdown = (): string => {
+    const configLine = `\`${WHISPER_MODEL}\` · \`${serverInfo?.device || COMPUTE_DEVICE}\``;
+
     switch (state) {
-      case RecordingState.CHECKING_SERVER:
-        return "# 🔍 Checking Server\n\nVerifying transcription server status...";
+      case State.CHECKING:
+        return `## Checking server...\n\n${configLine}`;
 
-      case RecordingState.STARTING_SERVER:
-        return "# 🚀 Starting Server\n\nStarting the Whisper transcription server...\n\nThis may take a moment on first run while downloading the model.";
+      case State.STARTING:
+        return `## Starting server...\n\nThis may take a moment on first run.\n\n${configLine}`;
 
-      case RecordingState.IDLE:
-        return "# 🎤 Voice Transcription\n\nReady to record audio.\n\nClick **Start Recording** to begin.";
+      case State.IDLE:
+        return `## Ready\n\nPress **Enter** to start recording.\n\n${configLine}`;
 
-      case RecordingState.RECORDING:
-        return "# 🔴 Recording...\n\nSpeak now. Click **Stop Recording** when finished.";
+      case State.RECORDING:
+        return `## 🔴 Recording\n\nSpeak now. Press **Enter** when done.`;
 
-      case RecordingState.PROCESSING:
-        return "# ⚙️ Processing\n\nTranscribing your audio using Whisper (CUDA)...\n\nPlease wait...";
+      case State.PROCESSING:
+        return `## Processing...\n\nTranscribing audio...`;
 
-      case RecordingState.COMPLETED:
-        return `# ✅ Transcription Complete\n\n## Result\n\n${transcription}\n\n---\n\n**Language:** ${language}\n**Duration:** ${duration.toFixed(2)}s`;
+      case State.DONE:
+        return `${transcription}\n\n---\n\n\`${language}\` · \`${duration.toFixed(1)}s\`\n\n**Copy** (Enter) · **Paste** (⇧ Enter)`;
 
-      case RecordingState.ERROR:
-        return `# ❌ Error\n\n${error}\n\n---\n\nPlease check:\n- Is the server running?\n- Is CUDA available?\n- Are dependencies installed?`;
+      case State.ERROR:
+        return `## Error\n\n${error}\n\n---\n\nCheck server and try again.`;
 
       default:
-        return "# Voice Transcription";
+        return "";
     }
   };
 
-  // Actions based on state
   const getActions = () => {
-    if (state === RecordingState.IDLE) {
-      return (
-        <ActionPanel>
-          <Action title="Start Recording" icon={Icon.Microphone} onAction={startRecording} />
-          <Action title="Check Server" icon={Icon.Network} onAction={checkServer} />
-        </ActionPanel>
-      );
-    }
+    const configMismatch = serverInfo?.configMismatch;
 
-    if (state === RecordingState.RECORDING) {
-      return (
-        <ActionPanel>
-          <Action title="Stop Recording" icon={Icon.Stop} onAction={stopRecording} />
-          <Action title="Cancel" icon={Icon.XMarkCircle} onAction={cancelRecording} />
-        </ActionPanel>
-      );
-    }
+    switch (state) {
+      case State.IDLE:
+        return (
+          <ActionPanel>
+            <Action title="Start Recording" icon={Icon.Microphone} onAction={startRecording} />
+            {configMismatch && (
+              <Action title="Restart Server (Config Changed)" icon={Icon.ArrowClockwise} onAction={handleRestart} />
+            )}
+            <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
+          </ActionPanel>
+        );
 
-    if (state === RecordingState.COMPLETED) {
-      return (
-        <ActionPanel>
-          <Action title="Copy to Clipboard" icon={Icon.Clipboard} onAction={copyToClipboard} />
-          <Action title="Paste at Cursor" icon={Icon.Text} onAction={pasteText} />
-          <Action title="New Recording" icon={Icon.Microphone} onAction={reset} />
-        </ActionPanel>
-      );
-    }
+      case State.RECORDING:
+        return (
+          <ActionPanel>
+            <Action title="Stop & Transcribe" icon={Icon.Stop} onAction={stopRecording} />
+            <Action title="Cancel" icon={Icon.XMarkCircle} onAction={reset} />
+          </ActionPanel>
+        );
 
-    if (state === RecordingState.ERROR) {
-      return (
-        <ActionPanel>
-          <Action title="Try Again" icon={Icon.RotateClockwise} onAction={reset} />
-          <Action title="Check Server" icon={Icon.Network} onAction={checkServer} />
-        </ActionPanel>
-      );
-    }
+      case State.DONE:
+        return (
+          <ActionPanel>
+            <Action title="Copy" icon={Icon.Clipboard} onAction={copy} />
+            <Action title="Paste" icon={Icon.Text} onAction={paste} shortcut={pasteShortcut} />
+            <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["cmd"], key: "n" }} />
+            <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
+          </ActionPanel>
+        );
 
-    return <ActionPanel />;
+      case State.ERROR:
+        return (
+          <ActionPanel>
+            <Action title="Try Again" icon={Icon.ArrowClockwise} onAction={reset} />
+            <Action title="Restart Server" icon={Icon.RotateClockwise} onAction={handleRestart} />
+            <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
+          </ActionPanel>
+        );
+
+      default:
+        return <ActionPanel />;
+    }
   };
 
   return <Detail markdown={getMarkdown()} actions={getActions()} />;

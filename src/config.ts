@@ -1,20 +1,87 @@
 /**
  * Configuration for the voice transcription extension
- * This file contains the absolute path to the backend directory
+ * All settings are managed via Raycast preferences
  */
 
-import path from "path";
 import { getPreferenceValues } from "@raycast/api";
 
-// Preferences typed from Raycast manifest (see https://developers.raycast.com/api-reference/preferences)
-const preferences = getPreferenceValues<Preferences.Transcribe>();
+// Preferences interface matching package.json
+export interface TranscribePreferences {
+  backendDirectory: string;
+  serverPort?: string;
+  autoStart?: boolean;
+  whisperModel?: string;
+  computeDevice?: string;
+}
 
-// Backend directory is configured via Raycast preferences (directory picker)
-export const BACKEND_DIR = preferences.backendDirectory;
+/**
+ * Get all preferences with defaults
+ */
+export function getConfig(): TranscribePreferences {
+  const prefs = getPreferenceValues<TranscribePreferences>();
+  return {
+    backendDirectory: prefs.backendDirectory,
+    serverPort: prefs.serverPort || "51234",
+    autoStart: prefs.autoStart ?? true,
+    whisperModel: prefs.whisperModel || "base",
+    computeDevice: prefs.computeDevice || "cuda",
+  };
+}
+
+// Cached config for module exports
+const config = getConfig();
+
+// Backend directory from preferences
+export const BACKEND_DIR = config.backendDirectory;
 
 // Server configuration
 export const SERVER_HOST = "127.0.0.1";
-// Prefer a configured port, but fall back to 51234
-const preferredPort = preferences.serverPort && preferences.serverPort.trim().length > 0 ? Number(preferences.serverPort) : 51234;
-export const SERVER_PORT = Number.isFinite(preferredPort) && preferredPort > 0 ? preferredPort : 51234;
+export const SERVER_PORT = parsePort(config.serverPort);
 export const SERVER_URL = `http://${SERVER_HOST}:${SERVER_PORT}`;
+
+// Model and device settings
+export const WHISPER_MODEL = config.whisperModel || "base";
+export const COMPUTE_DEVICE = config.computeDevice || "cuda";
+
+// Auto-start preference
+export const AUTO_START = config.autoStart ?? true;
+
+/**
+ * Parse port with fallback
+ */
+function parsePort(port?: string): number {
+  const parsed = port ? Number(port) : 51234;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 51234;
+}
+
+/**
+ * Server configuration object for passing to backend
+ */
+export interface ServerConfig {
+  model: string;
+  device: string;
+  computeType: string;
+  port: number;
+}
+
+/**
+ * Get server config object
+ */
+export function getServerConfig(): ServerConfig {
+  const cfg = getConfig();
+  const device = cfg.computeDevice || "cuda";
+  return {
+    model: cfg.whisperModel || "base",
+    device: device,
+    computeType: device === "cuda" ? "float16" : "int8",
+    port: parsePort(cfg.serverPort),
+  };
+}
+
+/**
+ * Generate a config fingerprint to detect changes
+ */
+export function getConfigFingerprint(): string {
+  const cfg = getConfig();
+  return `${cfg.whisperModel}|${cfg.computeDevice}|${cfg.serverPort}`;
+}
