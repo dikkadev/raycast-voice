@@ -94,6 +94,9 @@ These are ideas and enhancements that are not part of the current development sc
 ### Transcription History
 - [ ] **Save previous transcriptions** - Simple feature to save and access previous transcriptions for quick copy/paste. This is not intended to be a full transcription manager, but rather a lightweight way to keep recent transcriptions accessible. Should leverage Raycast's built-in storage APIs (e.g., LocalStorage) and Node.js file system capabilities where appropriate. Users could access saved transcriptions to quickly copy or paste them without needing to re-record.
 
+### Live Transcription Viewing
+- [ ] **Live transcription preview** - A fun and nice-to-have feature that provides real-time transcription feedback while recording. User selects a different (smaller) model specifically for live transcription. During recording, the system repeatedly sends growing audio chunks to this smaller model and continuously displays the latest transcription text. This provides immediate visual feedback of what's being transcribed. When recording stops, the complete audio is still sent to the main selected (larger) model for the final, high-quality transcription. This allows users to see live text updates during recording while still getting the accuracy of the full model at the end.
+
 ---
 
 ## 🔧 Technical Implementation
