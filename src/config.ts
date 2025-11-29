@@ -17,6 +17,7 @@ export interface TranscribePreferences {
   returnToRoot?: boolean;
   audioLevelPollingRate?: string;
   autoAction?: string;
+  saveToHistory?: boolean;
 }
 
 /**
@@ -64,6 +65,12 @@ export const RETURN_TO_ROOT = config.returnToRoot ?? false;
 export function getAutoAction(): string {
   const cfg = getConfig();
   return cfg.autoAction || "none";
+}
+
+// Save to history preference
+export function getSaveToHistory(): boolean {
+  const cfg = getConfig();
+  return cfg.saveToHistory ?? true;
 }
 
 // Audio level polling rate (in milliseconds, 0 = disabled)

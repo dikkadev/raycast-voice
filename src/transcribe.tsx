@@ -11,6 +11,8 @@ import {
   popToRoot,
   Form,
   useNavigation,
+  launchCommand,
+  LaunchType,
 } from "@raycast/api";
 import { useEffect, useState, useRef, useMemo } from "react";
 import {
@@ -21,7 +23,8 @@ import {
   CancelEndpointUnavailableError,
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
-import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction } from "./config";
+import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory } from "./config";
+import { saveTranscription } from "./history-storage";
 
 enum State {
   IDLE = "idle",
@@ -108,6 +111,7 @@ export default function Command() {
   const [transcriptionDuration, setTranscriptionDuration] = useState(0);
   const [processingElapsed, setProcessingElapsed] = useState(0);
   const [skipAutoAction, setSkipAutoAction] = useState(false);
+  const [skipSaveToHistory, setSkipSaveToHistory] = useState(false);
   
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
@@ -266,10 +270,12 @@ export default function Command() {
     }
   }, [state, transcription, skipAutoAction, autoAction]);
 
-  // Reset auto-action executed flag when starting a new recording
+  // Reset auto-action executed flag and skip flags when starting a new recording
   useEffect(() => {
     if (state === State.RECORDING || state === State.IDLE) {
       autoActionExecutedRef.current = false;
+      setSkipAutoAction(false);
+      setSkipSaveToHistory(false);
     }
   }, [state]);
 
@@ -364,6 +370,25 @@ export default function Command() {
       setTranscriptionStartTime(null);
       setProcessingElapsed(0);
 
+      // Save to history if enabled and not skipped
+      if (getSaveToHistory() && !skipSaveToHistory) {
+        try {
+          await saveTranscription({
+            id: Date.now().toString(),
+            text: result.text,
+            language: result.language,
+            duration: result.duration,
+            transcriptionTime: transcriptionTime,
+            model: WHISPER_MODEL,
+            device: serverInfo?.device || COMPUTE_DEVICE,
+            timestamp: Date.now(),
+          });
+        } catch (err) {
+          // Silently fail - history saving is optional
+          console.error("Failed to save to history:", err);
+        }
+      }
+
       await showToast({ style: Toast.Style.Success, title: "Done" });
       
       // Reset skip flag for next recording (after a brief delay to allow auto-action)
@@ -409,6 +434,7 @@ export default function Command() {
     setTranscriptionDuration(0);
     setProcessingElapsed(0);
     setSkipAutoAction(false);
+    setSkipSaveToHistory(false);
     autoActionExecutedRef.current = false;
   };
 
@@ -445,6 +471,10 @@ export default function Command() {
 
   const toggleSkipAutoAction = () => {
     setSkipAutoAction((prev) => !prev);
+  };
+
+  const toggleSkipSaveToHistory = () => {
+    setSkipSaveToHistory((prev) => !prev);
   };
 
   const maybeReturnToRoot = async () => {
@@ -494,12 +524,13 @@ export default function Command() {
         const recordingPhrase = getRecordingPhrase(recordingElapsed);
         const timerDisplay = recordingStart !== null ? formatElapsed(recordingElapsed) : "00:00";
         const recordingSkipIndicator = autoAction !== "none" && skipAutoAction ? "\n\n⏸️ Auto-action disabled" : "";
+        const recordingSaveDisabled = getSaveToHistory() && skipSaveToHistory ? "\n\n💾 Saving disabled" : "";
         const autoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
         const recordingAutoAction = autoAction !== "none" 
           ? ` · 🔄 ${skipAutoAction ? `~~\`${autoActionText}\`~~` : `\`${autoActionText}\``}`
           : "";
         
-        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
+        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}${recordingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
 
       case State.PROCESSING:
         const clockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
@@ -507,11 +538,12 @@ export default function Command() {
         const processingTimer = transcriptionStartTime ? formatElapsed(processingElapsed) : "00:00";
         // Slow down dots: 6 * 80ms = 480ms per dot change (close to original 500ms)
         const processingSkipIndicator = autoAction !== "none" && skipAutoAction ? "\n\n⏸️ Auto-action disabled" : "";
+        const processingSaveDisabled = getSaveToHistory() && skipSaveToHistory ? "\n\n💾 Saving disabled" : "";
         const processingAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
         const processingAutoAction = autoAction !== "none" 
           ? ` · 🔄 ${skipAutoAction ? `~~\`${processingAutoActionText}\`~~` : `\`${processingAutoActionText}\``}`
           : "";
-        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
+        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}${processingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
 
       case State.DONE:
         const languageEmoji = "🌐";
@@ -559,6 +591,14 @@ export default function Command() {
                 shortcut={{ modifiers: ["ctrl"], key: "a" }}
               />
             )}
+            {getSaveToHistory() && (
+              <Action
+                title={skipSaveToHistory ? "Enable Saving" : "Skip Saving"}
+                icon={skipSaveToHistory ? Icon.Document : Icon.DocumentRemove}
+                onAction={toggleSkipSaveToHistory}
+                shortcut={{ modifiers: ["ctrl"], key: "s" }}
+              />
+            )}
           </ActionPanel>
         );
 
@@ -571,6 +611,14 @@ export default function Command() {
                 icon={skipAutoAction ? Icon.Play : Icon.Pause}
                 onAction={toggleSkipAutoAction}
                 shortcut={{ modifiers: ["ctrl"], key: "a" }}
+              />
+            )}
+            {getSaveToHistory() && (
+              <Action
+                title={skipSaveToHistory ? "Enable Saving" : "Skip Saving"}
+                icon={skipSaveToHistory ? Icon.Document : Icon.DocumentRemove}
+                onAction={toggleSkipSaveToHistory}
+                shortcut={{ modifiers: ["ctrl"], key: "s" }}
               />
             )}
           </ActionPanel>
@@ -586,6 +634,12 @@ export default function Command() {
               icon={Icon.Pencil}
               shortcut={{ modifiers: ["ctrl"], key: "e" }}
               target={<EditTranscriptionForm initialText={transcription} onSave={setTranscription} />}
+            />
+            <Action
+              title="View History"
+              icon={Icon.Clock}
+              onAction={() => launchCommand({ name: "view-history", type: LaunchType.UserInitiated })}
+              shortcut={{ modifiers: ["cmd"], key: "h" }}
             />
             <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["cmd"], key: "n" }} />
             <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />

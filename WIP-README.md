@@ -54,6 +54,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Enter key to stop** - Primary action triggered on Enter
 - [x] **Edit transcription** - Modify text before copying or pasting
 - [x] **Auto-action after transcription** - Automatically execute paste or copy when transcription completes (configurable, can be skipped during recording/processing with Ctrl+A)
+- [x] **View History** - Access previous transcriptions (Cmd+H shortcut)
 
 ### Backend Features
 - [x] **CUDA support** - GPU acceleration using NVIDIA CUDA
@@ -74,6 +75,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Auto-action** - Dropdown: None, Paste, Copy (default: None)
 - [x] **Return to root** - Toggle to close Raycast after copy/paste actions
 - [x] **Audio level polling rate** - Configurable rate for audio level indicator (25-250ms, or 0 to disable)
+- [x] **Save to History** - Toggle to enable/disable automatic saving of transcriptions to history (default: On)
 
 ---
 
@@ -81,6 +83,10 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 
 ### Error Handling & Robustness
 - [ ] **Better error messages** - More specific error handling and user-friendly messages
+
+### Keyboard Shortcuts
+- [ ] **Command+H hotkey for history** - Add keyboard shortcut to access history view
+- [ ] **Command+N hotkey for new recording** - Add keyboard shortcut to start new recording
 
 ---
 
@@ -100,7 +106,7 @@ These are ideas and enhancements that are not part of the current development sc
 - [ ] **LLM-based text transformation** - Pipe transcription output through an LLM to perform intelligent transformations. For example, when user says "open parentheses", the LLM would transform it to "(" instead of the literal text. This would enable natural voice commands for punctuation, symbols, and formatting that users actually want in their text.
 
 ### Transcription History
-- [ ] **Save previous transcriptions** - Simple feature to save and access previous transcriptions for quick copy/paste. This is not intended to be a full transcription manager, but rather a lightweight way to keep recent transcriptions accessible. Should leverage Raycast's built-in storage APIs (e.g., LocalStorage) and Node.js file system capabilities where appropriate. Users could access saved transcriptions to quickly copy or paste them without needing to re-record.
+- [x] **Save previous transcriptions** - Simple feature to save and access previous transcriptions for quick copy/paste. Implemented as a separate command using Raycast's LocalStorage API. Users can view history, copy/paste previous transcriptions, and manage saved items. History is automatically saved after each successful transcription (configurable via preferences).
 
 ### Live Transcription Viewing
 - [ ] **Live transcription preview** - A fun and nice-to-have feature that provides real-time transcription feedback while recording. User selects a different (smaller) model specifically for live transcription. During recording, the system repeatedly sends growing audio chunks to this smaller model and continuously displays the latest transcription text. This provides immediate visual feedback of what's being transcribed. When recording stops, the complete audio is still sent to the main selected (larger) model for the final, high-quality transcription. This allows users to see live text updates during recording while still getting the accuracy of the full model at the end.
@@ -111,6 +117,8 @@ These are ideas and enhancements that are not part of the current development sc
 
 ### Frontend (TypeScript/React)
 - `transcribe.tsx` - Main command component with state management
+- `view-history.tsx` - Transcription history viewer command
+- `history-storage.ts` - History storage using Raycast LocalStorage API
 - `config.ts` - Configuration and preferences handling
 - `transcription-client.ts` - HTTP client for backend API
 - `server-manager.ts` - Python server lifecycle management
@@ -139,6 +147,8 @@ Python Backend (transcription_server.py)
 
 ### Key Files
 - `src/transcribe.tsx` - Main UI component
+- `src/view-history.tsx` - Transcription history viewer
+- `src/history-storage.ts` - History storage module using LocalStorage
 - `src/config.ts` - Preferences handling and config fingerprinting
 - `src/server-manager.ts` - Server lifecycle with restart support
 - `src/transcription-client.ts` - API client
@@ -161,6 +171,7 @@ All configuration is done via Raycast Extension Preferences (no environment vari
 | Return to Root After Action | Checkbox | ✗ Off | Close Raycast after copy or paste |
 | Audio Level Polling Rate (ms) | Text | 100 | How often to update audio level indicator (25-250ms, 0 to disable) |
 | Auto-action After Transcription | Dropdown | None | Automatically execute paste or copy when transcription completes |
+| Save to History | Checkbox | ✓ On | Automatically save transcriptions to history for quick access |
 
 ---
 

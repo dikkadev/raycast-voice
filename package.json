@@ -92,8 +92,23 @@
             { "title": "Paste", "value": "paste" },
             { "title": "Copy", "value": "copy" }
           ]
+        },
+        {
+          "name": "saveToHistory",
+          "type": "checkbox",
+          "title": "Save to History",
+          "label": "Automatically save transcriptions to history",
+          "description": "When enabled, transcriptions are automatically saved to history for quick access later.",
+          "default": true,
+          "required": false
         }
       ]
+    },
+    {
+      "name": "view-history",
+      "title": "View Transcription History",
+      "description": "View and manage your transcription history",
+      "mode": "view"
     }
   ],
   "dependencies": {

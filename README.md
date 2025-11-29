@@ -9,6 +9,7 @@ A high-performance Raycast extension for Windows that records audio and transcri
 - **One-Click Workflow**: Record -> Transcribe -> Copy/Paste.
 - **Auto-Start**: Server automatically starts when you use the extension.
 - **Auto-Action**: Automatically paste or copy transcription when complete (configurable, can be skipped).
+- **Transcription History**: Automatically saves transcriptions for quick access. View, search, copy/paste previous transcriptions, and export to CSV.
 - **Multi-Language**: Auto-detects languages (Whisper supports 99+ languages).
 - **Customizable**: Choose your model size (Tiny to Large) and compute device (CUDA/CPU).
 - **Visual Feedback**: Real-time audio level indicator and recording timer.
@@ -65,8 +66,25 @@ This installs:
     *   The UI shows the configured auto-action (e.g., "🔄 Auto-paste") and displays it with strikethrough when disabled.
     *   **Manual actions** (if auto-action is skipped or disabled):
         *   **Paste**: Press `Enter` or click "Paste" to paste directly into the active window.
-        *   **Copy**: Press `Ctrl+C` or click "Copy" to copy to clipboard.
-        *   **Edit**: Press `Ctrl+E` to make corrections before copying or pasting.
+        *   **Copy** (`Ctrl+C`): Copy to clipboard.
+        *   **Edit** (`Ctrl+E`): Make corrections before copying or pasting.
+        *   **View History**: View your transcription history.
+        *   **New Recording**: Start a new recording session.
+6.  **Skip Saving to History** (`Ctrl+S`): Press during recording or processing to skip saving the current transcription to history (only if "Save to History" is enabled in preferences).
+
+## 📚 Transcription History
+
+The extension automatically saves your transcriptions to history (configurable via preferences). Access your history with the **"View Transcription History"** command:
+
+- **View History**: Search for **"View Transcription History"** in Raycast or use `Cmd+H` from the main transcription command.
+- **Search**: Use the built-in search to find specific transcriptions by text content.
+- **Actions**:
+    *   **Paste**: Press `Enter` or click to paste the selected transcription directly.
+    *   **Copy** (`Ctrl+C`): Copy transcription to clipboard.
+    *   **Export to CSV**: Export all transcriptions to a CSV file (opens Windows save dialog).
+    *   **Delete** (`Ctrl+Backspace`): Remove a single transcription.
+    *   **Clear All**: Remove all saved transcriptions.
+- **Metadata**: Each entry includes language, model used, device (CUDA/CPU), audio duration, transcription time, and timestamp.
 
 ## ⚙️ Configuration
 
@@ -79,6 +97,7 @@ Go to **Raycast Settings** > **Extensions** > **Voice Transcription** to configu
 | **Compute Device** | `CUDA` (GPU) or `CPU`. CUDA is significantly faster. | `CUDA` |
 | **Auto-start** | Start recording immediately when the command is opened. | `true` |
 | **Auto-action After Transcription** | Automatically execute `Paste` or `Copy` when transcription completes. Set to `None` to disable. | `None` |
+| **Save to History** | Automatically save transcriptions to history for quick access later. | `true` |
 | **Return to Root After Action** | Close Raycast after copy or paste actions. | `false` |
 | **Audio Level Polling Rate (ms)** | How often to update audio level indicator (25-250ms). Set to `0` to disable. | `100` |
 | **Server Port** | Port for the local transcription server. | `51234` |
