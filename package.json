@@ -3,7 +3,7 @@
   "name": "voice",
   "title": "Voice Transcription",
   "description": "Quick, high-quality local voice transcription using Whisper",
-  "icon": "extension_icon.png",
+  "icon": "extension-icon.png",
   "license": "GPL-3.0",
   "commands": [
     {
@@ -79,6 +79,19 @@
           "description": "How often to update audio level indicator (25-250ms). Set to 0 to disable.",
           "default": "100",
           "required": false
+        },
+        {
+          "name": "autoAction",
+          "type": "dropdown",
+          "title": "Auto-action After Transcription",
+          "description": "Automatically execute an action when transcription completes. Press Ctrl+Shift+A during recording/processing to skip.",
+          "default": "none",
+          "required": false,
+          "data": [
+            { "title": "None (no auto-action)", "value": "none" },
+            { "title": "Paste", "value": "paste" },
+            { "title": "Copy", "value": "copy" }
+          ]
         }
       ]
     }

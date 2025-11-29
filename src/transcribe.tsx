@@ -12,7 +12,7 @@ import {
   Form,
   useNavigation,
 } from "@raycast/api";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import {
   startBackendRecording,
   stopRecordingAndTranscribe,
@@ -21,7 +21,7 @@ import {
   CancelEndpointUnavailableError,
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
-import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate } from "./config";
+import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction } from "./config";
 
 enum State {
   IDLE = "idle",
@@ -107,7 +107,13 @@ export default function Command() {
   const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
   const [transcriptionDuration, setTranscriptionDuration] = useState(0);
   const [processingElapsed, setProcessingElapsed] = useState(0);
+  const [skipAutoAction, setSkipAutoAction] = useState(false);
+  
+  // Memoize auto-action to prevent re-renders
+  const autoAction = useMemo(() => getAutoAction(), []);
+  
   const hasStarted = useRef(false);
+  const autoActionExecutedRef = useRef(false);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioLevelPollingRef = useRef<NodeJS.Timeout | null>(null);
   const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -173,9 +179,7 @@ export default function Command() {
           setAudioLevel(rawLevel);
           
           // Track maximum level seen for adaptive normalization
-          if (rawLevel > maxAudioLevel) {
-            setMaxAudioLevel(rawLevel);
-          }
+          setMaxAudioLevel((prevMax) => Math.max(prevMax, rawLevel));
           
           // Update rolling buffer for waveform
           setAudioLevelHistory((prev) => {
@@ -211,7 +215,7 @@ export default function Command() {
         audioLevelPollingRef.current = null;
       }
     };
-  }, [state, maxAudioLevel]);
+  }, [state]);
 
   useEffect(() => {
     activeStateRef.current = state;
@@ -228,6 +232,44 @@ export default function Command() {
       return () => clearInterval(interval);
     } else {
       setAnimationTick(0);
+    }
+  }, [state]);
+
+  // Auto-action effect: execute when transcription completes
+  useEffect(() => {
+    if (state === State.DONE && transcription && !skipAutoAction && autoAction !== "none" && !autoActionExecutedRef.current) {
+      autoActionExecutedRef.current = true;
+      const executeAutoAction = async () => {
+        try {
+          if (autoAction === "paste") {
+            await paste();
+          } else if (autoAction === "copy") {
+            await copy();
+          }
+          // Reset skip flag after execution
+          setSkipAutoAction(false);
+        } catch (err) {
+          console.error("Auto-action failed:", err);
+          await showToast({ 
+            style: Toast.Style.Failure, 
+            title: "Auto-action failed", 
+            message: err instanceof Error ? err.message : String(err) 
+          });
+          setSkipAutoAction(false);
+        }
+      };
+      // Small delay to ensure UI has updated
+      const timer = setTimeout(() => {
+        executeAutoAction();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [state, transcription, skipAutoAction, autoAction]);
+
+  // Reset auto-action executed flag when starting a new recording
+  useEffect(() => {
+    if (state === State.RECORDING || state === State.IDLE) {
+      autoActionExecutedRef.current = false;
     }
   }, [state]);
 
@@ -323,6 +365,9 @@ export default function Command() {
       setProcessingElapsed(0);
 
       await showToast({ style: Toast.Style.Success, title: "Done" });
+      
+      // Reset skip flag for next recording (after a brief delay to allow auto-action)
+      // The auto-action will be triggered by useEffect when state becomes DONE
     } catch (err) {
       console.error("Transcription failed:", err);
       setState(State.ERROR);
@@ -363,6 +408,8 @@ export default function Command() {
     setTranscriptionStartTime(null);
     setTranscriptionDuration(0);
     setProcessingElapsed(0);
+    setSkipAutoAction(false);
+    autoActionExecutedRef.current = false;
   };
 
   const cancelRecording = async () => {
@@ -396,6 +443,10 @@ export default function Command() {
     }
   };
 
+  const toggleSkipAutoAction = () => {
+    setSkipAutoAction((prev) => !prev);
+  };
+
   const maybeReturnToRoot = async () => {
     if (RETURN_TO_ROOT) {
       await popToRoot({ clearSearchBar: true });
@@ -425,33 +476,50 @@ export default function Command() {
 
     switch (state) {
       case State.CHECKING:
-        return `## 🔍 Checking server${getAnimatedDots(animationTick)}\n\n${deviceEmoji} \`${model}\` · \`${device}\``;
+        const checkingAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
+        return `## 🔍 Checking server${getAnimatedDots(animationTick)}\n\n${deviceEmoji} \`${model}\` · \`${device}\`${checkingAutoAction}`;
 
       case State.STARTING:
-        return `## 🚀 Starting server${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\``;
+        const startingAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
+        return `## 🚀 Starting server${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\`${startingAutoAction}`;
 
       case State.IDLE:
-        return `## 🎙️ Ready\n\nPress **Enter** to start recording.\n\n─────────────────────\n\n${deviceEmoji} \`${model}\` · \`${device}\``;
+        const idleAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
+        return `## 🎙️ Ready\n\nPress **Enter** to start recording.\n\n─────────────────────\n\n${deviceEmoji} \`${model}\` · \`${device}\`${idleAutoAction}`;
 
       case State.RECORDING:
         const waveform = renderWaveform(audioLevelHistory);
         const recordingPhrase = getRecordingPhrase(recordingElapsed);
         const timerDisplay = recordingStart !== null ? formatElapsed(recordingElapsed) : "00:00";
+        const recordingSkipIndicator = autoAction !== "none" && skipAutoAction ? "\n\n⏸️ Auto-action disabled" : "";
+        const autoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
+        const recordingAutoAction = autoAction !== "none" 
+          ? ` · 🔄 ${skipAutoAction ? `\`~~${autoActionText}~~\`` : `\`${autoActionText}\``}`
+          : "";
         
-        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\``;
+        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
 
       case State.PROCESSING:
         const clockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
         const clockEmoji = clockEmojis[animationTick % clockEmojis.length];
         const processingTimer = transcriptionStartTime ? formatElapsed(processingElapsed) : "00:00";
         // Slow down dots: 6 * 80ms = 480ms per dot change (close to original 500ms)
-        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\``;
+        const processingSkipIndicator = autoAction !== "none" && skipAutoAction ? "\n\n⏸️ Auto-action disabled" : "";
+        const processingAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
+        const processingAutoAction = autoAction !== "none" 
+          ? ` · 🔄 ${skipAutoAction ? `\`~~${processingAutoActionText}~~\`` : `\`${processingAutoActionText}\``}`
+          : "";
+        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
 
       case State.DONE:
         const languageEmoji = "🌐";
         const audioTime = duration.toFixed(1);
         const transcriptionTime = transcriptionDuration.toFixed(1);
-        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · ⏱️ \`${duration.toFixed(1)}s\` · 📦 \`${model}\`\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
+        const doneAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
+        const doneAutoAction = autoAction !== "none" 
+          ? ` · 🔄 ${skipAutoAction ? `\`~~${doneAutoActionText}~~\`` : `\`${doneAutoActionText}\``}`
+          : "";
+        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
 
       case State.ERROR:
         return `## ❌ Error\n\n${error}\n\n─────────────────────\n\nCheck server and try again.`;
@@ -481,6 +549,28 @@ export default function Command() {
           <ActionPanel>
             <Action title="Stop & Transcribe" icon={Icon.Stop} onAction={stopRecording} />
             <Action title="Cancel" icon={Icon.XMarkCircle} onAction={cancelRecording} />
+            {autoAction !== "none" && (
+              <Action
+                title={skipAutoAction ? "Enable Auto-Action" : "Skip Auto-Action"}
+                icon={skipAutoAction ? Icon.Play : Icon.Pause}
+                onAction={toggleSkipAutoAction}
+                shortcut={{ modifiers: ["ctrl"], key: "a" }}
+              />
+            )}
+          </ActionPanel>
+        );
+
+      case State.PROCESSING:
+        return (
+          <ActionPanel>
+            {autoAction !== "none" && (
+              <Action
+                title={skipAutoAction ? "Enable Auto-Action" : "Skip Auto-Action"}
+                icon={skipAutoAction ? Icon.Play : Icon.Pause}
+                onAction={toggleSkipAutoAction}
+                shortcut={{ modifiers: ["ctrl"], key: "a" }}
+              />
+            )}
           </ActionPanel>
         );
 

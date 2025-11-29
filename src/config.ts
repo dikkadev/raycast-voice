@@ -16,6 +16,7 @@ export interface TranscribePreferences {
   computeDevice?: string;
   returnToRoot?: boolean;
   audioLevelPollingRate?: string;
+  autoAction?: string;
 }
 
 /**
@@ -31,6 +32,7 @@ export function getConfig(): TranscribePreferences {
     computeDevice: prefs.computeDevice || "cuda",
     returnToRoot: prefs.returnToRoot ?? false,
     audioLevelPollingRate: prefs.audioLevelPollingRate || "150",
+    autoAction: prefs.autoAction || "none",
   };
 }
 
@@ -57,6 +59,12 @@ export const AUTO_START = config.autoStart ?? true;
 
 // Return to root preference
 export const RETURN_TO_ROOT = config.returnToRoot ?? false;
+
+// Auto-action preference (function to read dynamically)
+export function getAutoAction(): string {
+  const cfg = getConfig();
+  return cfg.autoAction || "none";
+}
 
 // Audio level polling rate (in milliseconds, 0 = disabled)
 export function getAudioLevelPollingRate(): number {
