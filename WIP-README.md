@@ -19,7 +19,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 ## 🐛 Bugs to Research and Fix
 
 ### Known Issues
-- [ ] **No download progress** - First model download shows no progress indicator
+- None currently
 
 ---
 
@@ -81,8 +81,14 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 
 ### Error Handling & Robustness
 - [ ] **Better error messages** - More specific error handling and user-friendly messages
-- [ ] **Model download progress** - Show progress during initial model download
-- [ ] **Server crash recovery** - Auto-restart server if it crashes
+
+---
+
+## 🚫 Intentionally Omitted
+
+### Features We've Decided Not to Implement
+
+- [x] **Model download progress** - We've decided not to implement download progress tracking. Instead, we show a clear message "Downloading Whisper model..." with an animated clock emoji to indicate activity. This provides sufficient feedback to users that something is happening without the complexity of implementing progress tracking.
 
 ---
 

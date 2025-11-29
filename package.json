@@ -84,7 +84,7 @@
           "name": "autoAction",
           "type": "dropdown",
           "title": "Auto-action After Transcription",
-          "description": "Automatically execute an action when transcription completes. Press Ctrl+Shift+A during recording/processing to skip.",
+          "description": "Automatically execute an action when transcription completes. Press Ctrl+A during recording/processing to skip.",
           "default": "none",
           "required": false,
           "data": [

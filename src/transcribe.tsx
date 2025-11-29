@@ -480,8 +480,10 @@ export default function Command() {
         return `## 🔍 Checking server${getAnimatedDots(animationTick)}\n\n${deviceEmoji} \`${model}\` · \`${device}\`${checkingAutoAction}`;
 
       case State.STARTING:
+        const startingClockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
+        const startingClockEmoji = startingClockEmojis[animationTick % startingClockEmojis.length];
         const startingAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
-        return `## 🚀 Starting server${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\`${startingAutoAction}`;
+        return `## ${startingClockEmoji} Downloading Whisper model${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\`${startingAutoAction}`;
 
       case State.IDLE:
         const idleAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
