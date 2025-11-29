@@ -1,220 +1,103 @@
 # Voice Transcription - Raycast Extension
 
-A Raycast extension for Windows that records microphone audio and transcribes it locally using Whisper running on CUDA GPU.
+A high-performance Raycast extension for Windows that records audio and transcribes it locally using [Whisper](https://github.com/openai/whisper) (via `faster-whisper`) with CUDA GPU acceleration.
 
-## Features
+## 🚀 Features
 
-- 🎤 Record audio from your microphone
-- 🚀 Local transcription with Whisper (CUDA-accelerated)
-- 📋 Copy transcription to clipboard
-- ⌨️ Paste transcription directly at cursor
-- 🔄 Auto-start Python transcription server
-- 🌍 Multi-language support (auto-detect)
+- **Local Transcription**: Privacy-focused, runs entirely on your machine.
+- **CUDA Acceleration**: Uses NVIDIA GPU for lightning-fast transcription.
+- **One-Click Workflow**: Record -> Transcribe -> Copy/Paste.
+- **Auto-Start**: Server automatically starts when you use the extension.
+- **Multi-Language**: Auto-detects languages (Whisper supports 99+ languages).
+- **Customizable**: Choose your model size (Tiny to Large) and compute device (CUDA/CPU).
 
-## Prerequisites
+## 📋 Prerequisites
 
-### Required Software
+1.  **Windows** (The extension uses specific Windows APIs for process management).
+2.  **Raycast** for Windows.
+3.  **Python 3.10+** installed.
+4.  **UV** (Python package manager) - [Installation Guide](https://github.com/astral-sh/uv).
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    ```
+5.  **NVIDIA GPU** (Optional but recommended for speed).
+    *   Requires [CUDA Toolkit 12.x](https://developer.nvidia.com/cuda-downloads).
+    *   Requires [cuDNN 9.x](https://developer.nvidia.com/cudnn) (The backend automatically adds cuDNN to the path if found in standard locations).
 
-1. **UV** - Python package manager
-   ```bash
-   # Install UV (PowerShell)
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
+## 🛠️ Installation
 
-2. **Bun** - JavaScript runtime (already installed if you're using this extension)
+### 1. Clone and Install Extension
 
-3. **SoX** - Audio recording tool for Windows
-   ```bash
-   # Install via Chocolatey
-   choco install sox.portable
-   
-   # Or download from: https://sourceforge.net/projects/sox/
-   ```
-
-4. **CUD A** - NVIDIA GPU support
-   - Install CUDA Toolkit from: https://developer.nvidia.com/cuda-downloads
-   - Ensure you have a CUDA-capable NVIDIA GPU
-
-## Installation
-
-### 1. Install Dependencies
-
-#### TypeScript/Node dependencies:
 ```bash
-cd c:\Users\raikr\Documents\projs\raycast-extensions\voice
+# Install frontend dependencies
 bun install
 ```
 
-#### Python dependencies:
+### 2. Install Backend Dependencies
+
+The backend handles recording and transcription. It uses `uv` for fast dependency management.
+
 ```bash
 cd backend
 uv sync
 ```
 
-This will install:
-- `faster-whisper` - Optimized Whisper implementation with CUDA support
-- `fastapi` - Web framework
-- `uvicorn` - ASGI server
-- `python-multipart` - File upload support
+This installs:
+- `faster-whisper`: Optimized Whisper implementation.
+- `fastapi` & `uvicorn`: API server.
+- `sounddevice`: Audio recording.
 
-### 2. Download Whisper Model (optional)
+## 🎮 Usage
 
-The model will be downloaded automatically on first use. To pre-download:
+1.  Open Raycast and search for **"Transcribe Voice"**.
+2.  **Start Recording**:
+    *   If "Auto-start" is enabled (default), recording begins immediately.
+    *   Otherwise, press `Enter` to start.
+3.  **Speak** your text.
+4.  **Stop**: Press `Enter` again or select "Stop & Transcribe".
+5.  **Result**:
+    *   **Copy**: Press `Enter`.
+    *   **Paste**: Press `Shift + Enter` to paste directly into the active window.
+    *   **Edit**: Press `Cmd/Ctrl + E` to make corrections before copying.
 
-```bash
-cd backend
-uv run python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cuda')"
-```
+## ⚙️ Configuration
 
-Available models: `tiny`, `base`, `small`, `medium`, `large`
+Go to **Raycast Settings** > **Extensions** > **Voice Transcription** to configure:
 
-Default is `base` (good balance of speed and accuracy).
+| Setting | Description | Default |
+| :--- | :--- | :--- |
+| **Backend Directory** | **Required**. Path to the `backend` folder in this project. | |
+| **Whisper Model** | Model size (`tiny`, `base`, `small`, `medium`, `large-v3`). Larger models are more accurate but slower. | `base` |
+| **Compute Device** | `CUDA` (GPU) or `CPU`. CUDA is significantly faster. | `CUDA` |
+| **Auto-start** | Start recording immediately when the command is opened. | `true` |
+| **Server Port** | Port for the local transcription server. | `51234` |
 
-## Usage
+## 🏗️ Architecture
 
-### Method 1: Via Raycast
+The extension operates as a hybrid system:
 
-1. Open Raycast and search for "transcribe"
-2. Click "Start Recording"
-3. Speak into your microphone
-4. Click "Stop Recording"
-5. Wait for transcription to complete
-6. Choose to either:
-   - **Copy to Clipboard** - Copy the text
-   - **Paste at Cursor** - Paste directly where your cursor is
+1.  **Frontend (TypeScript)**: A Raycast UI that manages the user interaction and state.
+2.  **Backend (Python)**: A local FastAPI server managed by the frontend.
+    *   **Server Manager**: The frontend checks if the server is running on the specified port. If not, it launches `uv run python transcription_server.py`.
+    *   **Recording**: Audio is captured by the Python backend using `sounddevice` (PortAudio) to a temporary WAV file.
+    *   **Transcription**: When recording stops, `faster-whisper` processes the WAV file and returns the text.
 
-### Method 2: Manual Server Start (optional)
+## 🔧 Troubleshooting
 
-You can manually start the server before using the extension:
+### Server fails to start
+*   Check the "Backend Directory" setting in Raycast preferences. It must point to the folder containing `transcription_server.py`.
+*   Ensure `uv` is in your system PATH.
+*   Run `uv sync` in the `backend` directory manually to ensure dependencies are installed.
 
-```bash
-cd backend
-start-server.bat
-```
+### "Model not loaded" or CUDA errors
+*   If using CUDA, ensure you have NVIDIA drivers and CUDA Toolkit installed.
+*   If CUDA fails, the server attempts to fallback to CPU. Check the extension display to see if it says `cpu`.
+*   The first run might take longer as it downloads the Whisper model.
 
-Or use UV directly:
-```bash
-cd backend
-uv run python transcription_server.py
-```
+### Recording issues
+*   Ensure your default microphone is set correctly in Windows Sound Settings.
+*   The backend uses `sounddevice`, which connects to the default input device.
 
-The server will run on `http://127.0.0.1:5678`
+## 📜 License
 
-## Configuration
-
-### Change Whisper Model
-
-Set the `WHISPER_MODEL` environment variable before starting:
-
-```bash
-# PowerShell
-$env:WHISPER_MODEL="small"
-cd backend
-uv run python transcription_server.py
-```
-
-Models (in order of size/accuracy):
-- `tiny` - ~1GB VRAM, fastest
-- `base` - ~1GB VRAM, good balance ⭐ (default)
-- `small` - ~2GB VRAM, better accuracy
-- `medium` - ~5GB VRAM, high accuracy
-- `large` - ~10GB VRAM, best accuracy
-
-### Audio Recording Settings
-
-Edit `src/audio-recorder.ts` to customize:
-- Sample rate (default: 16000 Hz)
-- Channels (default: 1 - mono)
-- Threshold for silence detection
-
-## Troubleshooting
-
-### "Failed to start recording"
-
-**Issue**: SoX is not installed or not in PATH
-
-**Solution**:
-1. Install SoX: `choco install sox.portable`
-2. Verify installation: `sox --version`
-3. Restart your terminal/Raycast
-
-### "Server failed to start"
-
-**Issue**: CUDA not available or Python dependencies not installed
-
-**Solution**:
-1. Verify CUDA is installed: `nvidia-smi`
-2. Install Python dependencies: `cd backend && uv sync`
-3. Check server logs in the console
-
-### "Model not loaded"
-
-**Issue**: Whisper model failed to download or load
-
-**Solution**:
-1. Manually download the model (see Installation step 2)
-2. Check internet connection
-3. Ensure sufficient disk space (~1-10GB depending on model)
-
-### "Transcription failed"
-
-**Issue**: Audio file is corrupted or server error
-
-**Solution**:
-1. Check that the recording completed successfully
-2. Try recording again
-3. Check server logs for detailed error messages
-
-## Architecture
-
-```
-┌─────────────────┐
-│  Raycast UI     │
-│  (transcribe    │
-│   .tsx)         │
-└────────┬────────┘
-         │
-         ├─► AudioRecorder ──► SoX ──► WAV file
-         │   (audio-recorder.ts)
-         │
-         ├─► ServerManager ──► Start/Check Python server
-         │   (server-manager.ts)
-         │
-         └─► TranscriptionClient ──► HTTP POST ──┐
-             (transcription-client.ts)            │
-                                                  ▼
-                                         ┌────────────────┐
-                                         │ Python Backend │
-                                         │ (FastAPI)      │
-                                         └────────┬───────┘
-                                                  │
-                                                  ▼
-                                         ┌────────────────┐
-                                         │ faster-whisper │
-                                         │ (CUDA)         │
-                                         └────────────────┘
-```
-
-## Development
-
-### Build the extension
-
-```bash
-bun run build
-```
-
-### Run in dev mode
-
-```bash
-bun run dev
-```
-
-### Lint
-
-```bash
-bun run lint
-```
-
-## License
-
-MIT
+[GNU GPLv3](LICENSE)

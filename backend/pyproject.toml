@@ -2,6 +2,7 @@
 name = "voice-transcription-server"
 version = "0.1.0"
 description = "Local Whisper transcription server with CUDA support"
+license = { text = "GPL-3.0" }
 requires-python = ">=3.10"
 dependencies = [
     "faster-whisper>=1.0.0",

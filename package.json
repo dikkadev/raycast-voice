@@ -4,7 +4,7 @@
   "title": "Voice Transcription",
   "description": "Quick, high-quality local voice transcription using Whisper",
   "icon": "extension-icon.png",
-  "license": "MIT",
+  "license": "GPL-3.0",
   "commands": [
     {
       "name": "transcribe",
@@ -79,14 +79,12 @@
     "@raycast/api": "^1.103.0",
     "@raycast/utils": "^2.2.1",
     "axios": "^1.7.9",
-    "execa": "^9.6.0",
-    "tmp": "^0.2.3"
+    "execa": "^9.6.0"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^2.0.4",
     "@types/node": "22.13.10",
     "@types/react": "19.0.10",
-    "@types/tmp": "^0.2.6",
     "eslint": "^9.22.0",
     "prettier": "^3.5.3",
     "typescript": "^5.8.2"
