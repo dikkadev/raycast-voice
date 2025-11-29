@@ -23,7 +23,6 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 
 ### Known Issues
 - [ ] **No download progress** - First model download shows no progress indicator
-- [ ] **Keyboard state bug (Control key stuck)** - After transcribing and using Control+Enter to paste, the system appears to think the Control key is still pressed down. This causes keyboard input issues until the user manually resets the keyboard state (e.g., by pressing Control again). May be related to Raycast's keyboard handling, clipboard operations, or system-level keyboard state management. Needs investigation to determine if it's an extension issue, Raycast issue, or Windows system issue.
 
 ---
 

@@ -13,6 +13,7 @@ export interface TranscribePreferences {
   whisperModel?: string;
   computeDevice?: string;
   returnToRoot?: boolean;
+  audioLevelPollingRate?: string;
 }
 
 /**
@@ -27,6 +28,7 @@ export function getConfig(): TranscribePreferences {
     whisperModel: prefs.whisperModel || "base",
     computeDevice: prefs.computeDevice || "cuda",
     returnToRoot: prefs.returnToRoot ?? false,
+    audioLevelPollingRate: prefs.audioLevelPollingRate || "150",
   };
 }
 
@@ -50,6 +52,20 @@ export const AUTO_START = config.autoStart ?? true;
 
 // Return to root preference
 export const RETURN_TO_ROOT = config.returnToRoot ?? false;
+
+// Audio level polling rate (in milliseconds, 0 = disabled)
+export function getAudioLevelPollingRate(): number {
+  const rateStr = config.audioLevelPollingRate || "100";
+  const rate = parseInt(rateStr, 10);
+  if (!Number.isFinite(rate) || rate < 0) {
+    return 0; // Disabled
+  }
+  // Clamp between 25ms and 250ms, or 0 to disable
+  if (rate === 0) {
+    return 0; // Disabled
+  }
+  return Math.max(25, Math.min(250, rate));
+}
 
 /**
  * Parse port with fallback

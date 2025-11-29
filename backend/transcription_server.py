@@ -34,6 +34,7 @@ import soundfile as sf
 import threading
 import queue
 import time
+import numpy as np
 
 # Configure logging
 logging.basicConfig(
@@ -97,6 +98,10 @@ recording_stop_event: Optional[threading.Event] = None
 recording_file_path: Optional[str] = None
 recording_start_time: Optional[float] = None
 
+# Audio level tracking (thread-safe)
+audio_level: float = 0.0
+audio_level_lock: threading.Lock = threading.Lock()
+
 
 def check_cuda_available() -> bool:
     """Check if CUDA is available"""
@@ -159,8 +164,18 @@ def _record_audio_worker(file_path: str, stop_event: threading.Event, samplerate
     q: "queue.Queue[bytes]" = queue.Queue()
 
     def callback(indata, frames, time_info, status):
+        global audio_level
         if status:
             logger.warning(f"Recording status: {status}")
+        # Calculate RMS (Root Mean Square) audio level
+        # indata is a numpy array of shape (frames, channels) in range [-1.0, 1.0]
+        rms = np.sqrt(np.mean(indata**2))
+        # Return raw RMS value - normalization will be done on frontend
+        audio_level_value = float(rms)
+        
+        with audio_level_lock:
+            audio_level = audio_level_value
+        
         q.put(indata.copy())
 
     try:
@@ -261,7 +276,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 @app.post("/record/start")
 async def start_recording():
     """Start recording from default microphone"""
-    global recording_thread, recording_stop_event, recording_file_path, recording_start_time
+    global recording_thread, recording_stop_event, recording_file_path, recording_start_time, audio_level
 
     if recording_thread is not None and recording_thread.is_alive():
         raise HTTPException(status_code=400, detail="Recording already in progress")
@@ -274,6 +289,10 @@ async def start_recording():
             os.unlink(recording_file_path)
     except Exception:
         pass
+
+    # Reset audio level
+    with audio_level_lock:
+        audio_level = 0.0
 
     recording_stop_event = threading.Event()
     recording_thread = threading.Thread(
@@ -288,10 +307,21 @@ async def start_recording():
     return {"status": "recording_started"}
 
 
+@app.get("/record/level")
+async def get_audio_level():
+    """Get current audio level (0.0 to 1.0)"""
+    global audio_level
+    
+    with audio_level_lock:
+        level = audio_level
+    
+    return {"level": level}
+
+
 @app.post("/record/stop")
 async def stop_recording_and_transcribe():
     """Stop recording and transcribe"""
-    global recording_thread, recording_stop_event, recording_file_path, recording_start_time
+    global recording_thread, recording_stop_event, recording_file_path, recording_start_time, audio_level
 
     if recording_thread is None or recording_stop_event is None or recording_file_path is None:
         raise HTTPException(status_code=400, detail="No recording in progress")
@@ -301,6 +331,10 @@ async def stop_recording_and_transcribe():
 
     recording_thread = None
     recording_stop_event = None
+    
+    # Reset audio level when recording stops
+    with audio_level_lock:
+        audio_level = 0.0
 
     if not os.path.exists(recording_file_path):
         raise HTTPException(status_code=500, detail="Recorded file not found")
@@ -368,6 +402,7 @@ async def root():
             "GET  /config - Current configuration",
             "POST /transcribe - Transcribe uploaded audio",
             "POST /record/start - Start recording",
+            "GET  /record/level - Get current audio level (0.0-1.0)",
             "POST /record/stop - Stop recording and transcribe",
             "POST /shutdown - Gracefully stop server",
         ]

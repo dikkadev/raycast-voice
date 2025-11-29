@@ -90,3 +90,17 @@ export async function getServerConfig(): Promise<ServerConfig | null> {
     return null;
   }
 }
+
+/**
+ * Get current audio level (0.0 to 1.0)
+ */
+export async function getAudioLevel(): Promise<number> {
+  const url = `${SERVER_URL}/record/level`;
+  try {
+    const response = await axios.get(url, { timeout: 1000 });
+    return (response.data as { level: number }).level;
+  } catch (error) {
+    // If recording isn't active or endpoint fails, return 0
+    return 0.0;
+  }
+}

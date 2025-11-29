@@ -71,6 +71,14 @@
           "description": "When enabled, finishing actions (Copy/Paste) automatically pop back to the root search.",
           "default": false,
           "required": false
+        },
+        {
+          "name": "audioLevelPollingRate",
+          "type": "textfield",
+          "title": "Audio Level Polling Rate (ms)",
+          "description": "How often to update audio level indicator (25-250ms). Set to 0 to disable.",
+          "default": "100",
+          "required": false
         }
       ]
     }

@@ -13,9 +13,9 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { useEffect, useState, useRef } from "react";
-import { startBackendRecording, stopRecordingAndTranscribe } from "./transcription-client";
+import { startBackendRecording, stopRecordingAndTranscribe, getAudioLevel } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
-import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT } from "./config";
+import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate } from "./config";
 
 enum State {
   IDLE = "idle",
@@ -47,8 +47,11 @@ export default function Command() {
   const [serverInfo, setServerInfo] = useState<ServerStatus | null>(null);
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [recordingElapsed, setRecordingElapsed] = useState(0);
+  const [audioLevel, setAudioLevel] = useState(0.0);
+  const [maxAudioLevel, setMaxAudioLevel] = useState(0.0);
   const hasStarted = useRef(false);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioLevelPollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initialize on mount
   useEffect(() => {
@@ -79,6 +82,44 @@ export default function Command() {
       }
     };
   }, [state, recordingStart]);
+
+  // Audio level polling
+  useEffect(() => {
+    const pollingRate = getAudioLevelPollingRate();
+    
+    if (state === State.RECORDING && pollingRate > 0) {
+      const pollAudioLevel = async () => {
+        try {
+          const rawLevel = await getAudioLevel();
+          setAudioLevel(rawLevel);
+          // Track maximum level seen for adaptive normalization
+          if (rawLevel > maxAudioLevel) {
+            setMaxAudioLevel(rawLevel);
+          }
+        } catch (error) {
+          // Silently fail - audio level is optional
+          setAudioLevel(0.0);
+        }
+      };
+      
+      // Poll immediately, then at interval
+      pollAudioLevel();
+      audioLevelPollingRef.current = setInterval(pollAudioLevel, pollingRate);
+    } else {
+      setAudioLevel(0.0);
+      if (audioLevelPollingRef.current) {
+        clearInterval(audioLevelPollingRef.current);
+        audioLevelPollingRef.current = null;
+      }
+    }
+
+    return () => {
+      if (audioLevelPollingRef.current) {
+        clearInterval(audioLevelPollingRef.current);
+        audioLevelPollingRef.current = null;
+      }
+    };
+  }, [state, maxAudioLevel]);
 
   const checkServer = async () => {
     setState(State.CHECKING);
@@ -162,6 +203,8 @@ export default function Command() {
     setDuration(0);
     setRecordingStart(null);
     setRecordingElapsed(0);
+    setAudioLevel(0.0);
+    setMaxAudioLevel(0.0);
   };
 
   const maybeReturnToRoot = async () => {
@@ -197,9 +240,22 @@ export default function Command() {
         return `## Ready\n\nPress **Enter** to start recording.\n\n${configLine}`;
 
       case State.RECORDING:
+        const pollingRate = getAudioLevelPollingRate();
+        
+        // Normalize audio level for display - adaptive based on observed values
+        // Use adaptive normalization: scale based on max seen, but also have a reasonable default
+        // If max is very small (like 0.01-0.02), scale it up to be useful
+        // If max is larger, use it as the reference
+        const referenceLevel = Math.max(maxAudioLevel, 0.02); // Use at least 0.02 as reference
+        const normalizedLevel = Math.min(1.0, audioLevel / referenceLevel);
+        const barLength = Math.floor(normalizedLevel * 20);
+        
+        const debugInfo = pollingRate > 0 
+          ? `\n\n---\n\n### Audio Level Debug\n\n\`\`\`\nPolling Rate: ${pollingRate}ms\nRaw Level: ${audioLevel.toFixed(6)}\nMax Seen: ${maxAudioLevel.toFixed(6)}\nReference: ${referenceLevel.toFixed(6)}\nNormalized: ${normalizedLevel.toFixed(3)}\nBar Length: ${barLength}/20\n\`\`\`\n\n📊 Visual: ${"█".repeat(barLength)}${"░".repeat(20 - barLength)}`
+          : `\n\n---\n\n### Audio Level Debug\n\n\`\`\`\nPolling Rate: DISABLED (0)\nRaw Level: ${audioLevel.toFixed(6)}\nMax Seen: ${maxAudioLevel.toFixed(6)}\n\`\`\``;
         return `## 🔴 Recording\n\nSpeak now. Press **Enter** when done.${
           recordingStart !== null ? `\n\n⏱ ${formatElapsed(recordingElapsed)}` : ""
-        }`;
+        }${debugInfo}`;
 
       case State.PROCESSING:
         return `## Processing...\n\nTranscribing audio...`;
