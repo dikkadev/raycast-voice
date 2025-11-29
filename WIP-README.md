@@ -18,9 +18,6 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 
 ## 🐛 Bugs to Research and Fix
 
-### Critical Issues
-- [ ] **Recording cancellation state bug** - When cancelling a recording with Escape and then starting a new recording, the UI appears correct but still contains old text/audio from the previous recording. The frontend `reset()` function clears UI state but doesn't properly stop the backend recording, causing leftover state when starting a new recording. Need to investigate and fix the cancellation flow to ensure backend recording is properly stopped and state is fully cleared.
-
 ### Known Issues
 - [ ] **No download progress** - First model download shows no progress indicator
 
@@ -43,6 +40,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Config display** - Shows current model and device
 - [x] **Action panel** - Context-aware actions based on current state
 - [x] **Recording timer** - Elapsed time indicator while capturing audio
+- [x] **Audio level indicator** - Basic implementation (needs UI improvements)
 
 ### Actions Available
 - [x] **Copy** - Copies transcription text to clipboard
@@ -76,7 +74,12 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 ## ❌ Not Implemented / TODO
 
 ### User Experience Improvements
-- [ ] **Audio level indicator** - Visual feedback of microphone input level
+- [ ] **Full UI redesign** - Complete UI overhaul with modern, polished design. Should include:
+  - [ ] Improved audio level indicator with smooth animations and better visual feedback
+  - [ ] Better visual hierarchy and spacing
+  - [ ] Enhanced state transitions and animations
+  - [ ] More intuitive layout and information display
+  - [ ] Professional, polished appearance
 - [ ] **Recording history** - Save/access previous transcriptions
 - [ ] **Auto-action after transcription** - Option to automatically execute an action (e.g., paste, copy) when transcription completes. Default: none. E.g. If set to "paste", it behaves as if the user clicked paste immediately after finishing transcription.
 
