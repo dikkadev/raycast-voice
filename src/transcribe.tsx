@@ -42,6 +42,53 @@ const formatElapsed = (seconds: number) => {
   return `${minutes}:${secs}`;
 };
 
+// Waveform rendering with Unicode block characters
+const WAVEFORM_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+const WAVEFORM_BUFFER_SIZE = 18;
+
+const renderWaveform = (levels: number[]): string => {
+  // Pad with zeros if we don't have enough samples yet
+  const paddedLevels = [...levels];
+  while (paddedLevels.length < WAVEFORM_BUFFER_SIZE) {
+    paddedLevels.unshift(0.0);
+  }
+  
+  // Take only the last WAVEFORM_BUFFER_SIZE samples
+  const samples = paddedLevels.slice(-WAVEFORM_BUFFER_SIZE);
+
+  if (samples.length === 0 || samples.every((s) => s === 0)) {
+    return "▁".repeat(WAVEFORM_BUFFER_SIZE);
+  }
+
+  // Find max level for normalization (use adaptive scaling)
+  const maxLevel = Math.max(...samples);
+  const referenceLevel = Math.max(maxLevel, 0.02); // Use at least 0.02 as reference
+
+  // Normalize and map to Unicode blocks
+  const waveform = samples.map((level) => {
+    const normalized = Math.min(1.0, Math.max(0.0, level / referenceLevel));
+    const charIndex = Math.floor(normalized * (WAVEFORM_CHARS.length - 1));
+    return WAVEFORM_CHARS[charIndex];
+  });
+
+  return waveform.join("");
+};
+
+// Animated dots for loading states
+const getAnimatedDots = (tick: number, speedDivisor: number = 1): string => {
+  const dots = ["", ".", "..", "..."];
+  return dots[Math.floor(tick / speedDivisor) % dots.length];
+};
+
+// Personality phrases based on recording duration
+const getRecordingPhrase = (elapsed: number): string => {
+  if (elapsed < 5) return "Listening...";
+  if (elapsed < 15) return "Still listening...";
+  if (elapsed < 30) return "Go on...";
+  if (elapsed < 60) return "Keep going...";
+  return "Still here...";
+};
+
 export default function Command() {
   const copyShortcut: Keyboard.Shortcut = { modifiers: ["ctrl"], key: "c" };
 
@@ -55,9 +102,15 @@ export default function Command() {
   const [recordingElapsed, setRecordingElapsed] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0.0);
   const [maxAudioLevel, setMaxAudioLevel] = useState(0.0);
+  const [audioLevelHistory, setAudioLevelHistory] = useState<number[]>([]);
+  const [animationTick, setAnimationTick] = useState(0);
+  const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
+  const [transcriptionDuration, setTranscriptionDuration] = useState(0);
+  const [processingElapsed, setProcessingElapsed] = useState(0);
   const hasStarted = useRef(false);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioLevelPollingRef = useRef<NodeJS.Timeout | null>(null);
+  const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const activeStateRef = useRef<State>(State.IDLE);
 
   // Initialize on mount
@@ -90,7 +143,26 @@ export default function Command() {
     };
   }, [state, recordingStart]);
 
-  // Audio level polling
+  // Processing timer
+  useEffect(() => {
+    if (state === State.PROCESSING && transcriptionStartTime) {
+      processingTimerRef.current = setInterval(() => {
+        setProcessingElapsed((Date.now() - transcriptionStartTime) / 1000);
+      }, 100);
+    } else if (processingTimerRef.current) {
+      clearInterval(processingTimerRef.current);
+      processingTimerRef.current = null;
+    }
+
+    return () => {
+      if (processingTimerRef.current) {
+        clearInterval(processingTimerRef.current);
+        processingTimerRef.current = null;
+      }
+    };
+  }, [state, transcriptionStartTime]);
+
+  // Audio level polling with rolling buffer
   useEffect(() => {
     const pollingRate = getAudioLevelPollingRate();
     
@@ -99,13 +171,25 @@ export default function Command() {
         try {
           const rawLevel = await getAudioLevel();
           setAudioLevel(rawLevel);
+          
           // Track maximum level seen for adaptive normalization
           if (rawLevel > maxAudioLevel) {
             setMaxAudioLevel(rawLevel);
           }
+          
+          // Update rolling buffer for waveform
+          setAudioLevelHistory((prev) => {
+            const updated = [...prev, rawLevel];
+            // Keep only last WAVEFORM_BUFFER_SIZE samples
+            return updated.slice(-WAVEFORM_BUFFER_SIZE);
+          });
         } catch (error) {
           // Silently fail - audio level is optional
           setAudioLevel(0.0);
+          setAudioLevelHistory((prev) => {
+            const updated = [...prev, 0.0];
+            return updated.slice(-WAVEFORM_BUFFER_SIZE);
+          });
         }
       };
       
@@ -114,6 +198,7 @@ export default function Command() {
       audioLevelPollingRef.current = setInterval(pollAudioLevel, pollingRate);
     } else {
       setAudioLevel(0.0);
+      setAudioLevelHistory([]);
       if (audioLevelPollingRef.current) {
         clearInterval(audioLevelPollingRef.current);
         audioLevelPollingRef.current = null;
@@ -130,6 +215,20 @@ export default function Command() {
 
   useEffect(() => {
     activeStateRef.current = state;
+  }, [state]);
+
+  // Animation tick for loading states
+  useEffect(() => {
+    if (state === State.CHECKING || state === State.STARTING || state === State.PROCESSING) {
+      // Fast animation for processing (full clock revolution per second: 12 emojis / 1s = ~83ms)
+      const intervalMs = state === State.PROCESSING ? 80 : 500;
+      const interval = setInterval(() => {
+        setAnimationTick((prev) => prev + 1);
+      }, intervalMs);
+      return () => clearInterval(interval);
+    } else {
+      setAnimationTick(0);
+    }
   }, [state]);
 
   useEffect(() => {
@@ -202,23 +301,34 @@ export default function Command() {
 
   const stopRecording = async () => {
     try {
+      const processingStart = Date.now();
       setState(State.PROCESSING);
+      setTranscriptionStartTime(processingStart);
+      setProcessingElapsed(0);
       setRecordingStart(null);
       setRecordingElapsed(0);
       await showToast({ style: Toast.Style.Animated, title: "Transcribing..." });
 
       const result = await stopRecordingAndTranscribe();
 
+      const processingEnd = Date.now();
+      const transcriptionTime = (processingEnd - processingStart) / 1000;
+
       setTranscription(result.text);
       setLanguage(result.language);
       setDuration(result.duration);
+      setTranscriptionDuration(transcriptionTime);
       setState(State.DONE);
+      setTranscriptionStartTime(null);
+      setProcessingElapsed(0);
 
       await showToast({ style: Toast.Style.Success, title: "Done" });
     } catch (err) {
       console.error("Transcription failed:", err);
       setState(State.ERROR);
       setError(err instanceof Error ? err.message : String(err));
+      setTranscriptionStartTime(null);
+      setProcessingElapsed(0);
       await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(err) });
     }
   };
@@ -248,6 +358,11 @@ export default function Command() {
     setRecordingElapsed(0);
     setAudioLevel(0.0);
     setMaxAudioLevel(0.0);
+    setAudioLevelHistory([]);
+    setAnimationTick(0);
+    setTranscriptionStartTime(null);
+    setTranscriptionDuration(0);
+    setProcessingElapsed(0);
   };
 
   const cancelRecording = async () => {
@@ -294,51 +409,52 @@ export default function Command() {
   };
 
   const paste = async () => {
+    // Copy to clipboard first so it's available for later use
+    await Clipboard.copy(transcription);
+    // Then paste at cursor position using Raycast's paste functionality
     await Clipboard.paste(transcription);
-    await showToast({ style: Toast.Style.Success, title: "Pasted" });
+    await showToast({ style: Toast.Style.Success, title: "Pasted & Copied" });
     await maybeReturnToRoot();
   };
 
-  // Clean, minimal markdown
+  // Playful, animated markdown UI
   const getMarkdown = (): string => {
-    const configLine = `\`${WHISPER_MODEL}\` · \`${serverInfo?.device || COMPUTE_DEVICE}\``;
+    const model = WHISPER_MODEL;
+    const device = serverInfo?.device || COMPUTE_DEVICE;
+    const deviceEmoji = device.toLowerCase() === "cuda" ? "🖥️" : "💻";
 
     switch (state) {
       case State.CHECKING:
-        return `## Checking server...\n\n${configLine}`;
+        return `## 🔍 Checking server${getAnimatedDots(animationTick)}\n\n${deviceEmoji} \`${model}\` · \`${device}\``;
 
       case State.STARTING:
-        return `## Starting server...\n\nThis may take a moment on first run.\n\n${configLine}`;
+        return `## 🚀 Starting server${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\``;
 
       case State.IDLE:
-        return `## Ready\n\nPress **Enter** to start recording.\n\n${configLine}`;
+        return `## 🎙️ Ready\n\nPress **Enter** to start recording.\n\n─────────────────────\n\n${deviceEmoji} \`${model}\` · \`${device}\``;
 
       case State.RECORDING:
-        const pollingRate = getAudioLevelPollingRate();
+        const waveform = renderWaveform(audioLevelHistory);
+        const recordingPhrase = getRecordingPhrase(recordingElapsed);
+        const timerDisplay = recordingStart !== null ? formatElapsed(recordingElapsed) : "00:00";
         
-        // Normalize audio level for display - adaptive based on observed values
-        // Use adaptive normalization: scale based on max seen, but also have a reasonable default
-        // If max is very small (like 0.01-0.02), scale it up to be useful
-        // If max is larger, use it as the reference
-        const referenceLevel = Math.max(maxAudioLevel, 0.02); // Use at least 0.02 as reference
-        const normalizedLevel = Math.min(1.0, audioLevel / referenceLevel);
-        const barLength = Math.floor(normalizedLevel * 20);
-        
-        const debugInfo = pollingRate > 0 
-          ? `\n\n---\n\n### Audio Level Debug\n\n\`\`\`\nPolling Rate: ${pollingRate}ms\nRaw Level: ${audioLevel.toFixed(6)}\nMax Seen: ${maxAudioLevel.toFixed(6)}\nReference: ${referenceLevel.toFixed(6)}\nNormalized: ${normalizedLevel.toFixed(3)}\nBar Length: ${barLength}/20\n\`\`\`\n\n📊 Visual: ${"█".repeat(barLength)}${"░".repeat(20 - barLength)}`
-          : `\n\n---\n\n### Audio Level Debug\n\n\`\`\`\nPolling Rate: DISABLED (0)\nRaw Level: ${audioLevel.toFixed(6)}\nMax Seen: ${maxAudioLevel.toFixed(6)}\n\`\`\``;
-        return `## 🔴 Recording\n\nSpeak now. Press **Enter** when done.${
-          recordingStart !== null ? `\n\n⏱ ${formatElapsed(recordingElapsed)}` : ""
-        }${debugInfo}`;
+        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\``;
 
       case State.PROCESSING:
-        return `## Processing...\n\nTranscribing audio...`;
+        const clockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
+        const clockEmoji = clockEmojis[animationTick % clockEmojis.length];
+        const processingTimer = transcriptionStartTime ? formatElapsed(processingElapsed) : "00:00";
+        // Slow down dots: 6 * 80ms = 480ms per dot change (close to original 500ms)
+        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\``;
 
       case State.DONE:
-        return `${transcription}\n\n---\n\n\`${language}\` · \`${duration.toFixed(1)}s\`\n\n**Paste** (Enter) · **Copy** (⌃ C)`;
+        const languageEmoji = "🌐";
+        const audioTime = duration.toFixed(1);
+        const transcriptionTime = transcriptionDuration.toFixed(1);
+        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · ⏱️ \`${duration.toFixed(1)}s\` · 📦 \`${model}\`\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
 
       case State.ERROR:
-        return `## Error\n\n${error}\n\n---\n\nCheck server and try again.`;
+        return `## ❌ Error\n\n${error}\n\n─────────────────────\n\nCheck server and try again.`;
 
       default:
         return "";

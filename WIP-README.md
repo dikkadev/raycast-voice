@@ -41,6 +41,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Action panel** - Context-aware actions based on current state
 - [x] **Recording timer** - Elapsed time indicator while capturing audio
 - [x] **Audio level indicator** - Basic implementation (needs UI improvements)
+- [x] **Full UI redesign** - Complete UI overhaul with modern, polished design including improved audio level indicator with smooth animations, better visual hierarchy and spacing, enhanced state transitions and animations, more intuitive layout and information display, and professional, polished appearance
 
 ### Actions Available
 - [x] **Copy** - Copies transcription text to clipboard
@@ -74,13 +75,6 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 ## ❌ Not Implemented / TODO
 
 ### User Experience Improvements
-- [ ] **Full UI redesign** - Complete UI overhaul with modern, polished design. Should include:
-  - [ ] Improved audio level indicator with smooth animations and better visual feedback
-  - [ ] Better visual hierarchy and spacing
-  - [ ] Enhanced state transitions and animations
-  - [ ] More intuitive layout and information display
-  - [ ] Professional, polished appearance
-- [ ] **Recording history** - Save/access previous transcriptions
 - [ ] **Auto-action after transcription** - Option to automatically execute an action (e.g., paste, copy) when transcription completes. Default: none. E.g. If set to "paste", it behaves as if the user clicked paste immediately after finishing transcription.
 
 ### Error Handling & Robustness
@@ -96,6 +90,9 @@ These are ideas and enhancements that are not part of the current development sc
 
 ### Post-Transcription LLM Processing
 - [ ] **LLM-based text transformation** - Pipe transcription output through an LLM to perform intelligent transformations. For example, when user says "open parentheses", the LLM would transform it to "(" instead of the literal text. This would enable natural voice commands for punctuation, symbols, and formatting that users actually want in their text.
+
+### Transcription History
+- [ ] **Save previous transcriptions** - Simple feature to save and access previous transcriptions for quick copy/paste. This is not intended to be a full transcription manager, but rather a lightweight way to keep recent transcriptions accessible. Should leverage Raycast's built-in storage APIs (e.g., LocalStorage) and Node.js file system capabilities where appropriate. Users could access saved transcriptions to quickly copy or paste them without needing to re-record.
 
 ---
 
