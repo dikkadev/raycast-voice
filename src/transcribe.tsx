@@ -92,6 +92,8 @@ const getRecordingPhrase = (elapsed: number): string => {
   return "Still here...";
 };
 
+type AutoActionStatus = "idle" | "pending" | "success" | "failure";
+
 export default function Command() {
   const copyShortcut: Keyboard.Shortcut = { modifiers: ["ctrl"], key: "c" };
 
@@ -112,9 +114,12 @@ export default function Command() {
   const [processingElapsed, setProcessingElapsed] = useState(0);
   const [skipAutoAction, setSkipAutoAction] = useState(false);
   const [skipSaveToHistory, setSkipSaveToHistory] = useState(false);
+  const [autoActionStatus, setAutoActionStatus] = useState<AutoActionStatus>("idle");
   
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
+  const autoActionEnabled = autoAction !== "none";
+  const autoActionActive = autoActionEnabled && !skipAutoAction;
   
   const hasStarted = useRef(false);
   const autoActionExecutedRef = useRef(false);
@@ -227,7 +232,13 @@ export default function Command() {
 
   // Animation tick for loading states
   useEffect(() => {
-    if (state === State.CHECKING || state === State.STARTING || state === State.PROCESSING) {
+    const shouldAnimate =
+      state === State.CHECKING ||
+      state === State.STARTING ||
+      state === State.PROCESSING ||
+      (state === State.DONE && autoActionActive && autoActionStatus !== "failure");
+
+    if (shouldAnimate) {
       // Fast animation for processing (full clock revolution per second: 12 emojis / 1s = ~83ms)
       const intervalMs = state === State.PROCESSING ? 80 : 500;
       const interval = setInterval(() => {
@@ -237,12 +248,13 @@ export default function Command() {
     } else {
       setAnimationTick(0);
     }
-  }, [state]);
+  }, [state, autoActionActive, autoActionStatus]);
 
   // Auto-action effect: execute when transcription completes
   useEffect(() => {
-    if (state === State.DONE && transcription && !skipAutoAction && autoAction !== "none" && !autoActionExecutedRef.current) {
+    if (state === State.DONE && transcription && autoActionActive && !autoActionExecutedRef.current) {
       autoActionExecutedRef.current = true;
+      setAutoActionStatus("pending");
       const executeAutoAction = async () => {
         try {
           if (autoAction === "paste") {
@@ -250,14 +262,16 @@ export default function Command() {
           } else if (autoAction === "copy") {
             await copy();
           }
+          setAutoActionStatus("success");
           // Reset skip flag after execution
           setSkipAutoAction(false);
         } catch (err) {
           console.error("Auto-action failed:", err);
-          await showToast({ 
-            style: Toast.Style.Failure, 
-            title: "Auto-action failed", 
-            message: err instanceof Error ? err.message : String(err) 
+          setAutoActionStatus("failure");
+          await showToast({
+            style: Toast.Style.Failure,
+            title: "Auto-action failed",
+            message: err instanceof Error ? err.message : String(err),
           });
           setSkipAutoAction(false);
         }
@@ -268,7 +282,7 @@ export default function Command() {
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [state, transcription, skipAutoAction, autoAction]);
+  }, [state, transcription, autoActionActive, autoAction]);
 
   // Reset auto-action executed flag and skip flags when starting a new recording
   useEffect(() => {
@@ -276,8 +290,15 @@ export default function Command() {
       autoActionExecutedRef.current = false;
       setSkipAutoAction(false);
       setSkipSaveToHistory(false);
+      setAutoActionStatus("idle");
     }
   }, [state]);
+
+  useEffect(() => {
+    if (skipAutoAction) {
+      setAutoActionStatus("idle");
+    }
+  }, [skipAutoAction]);
 
   useEffect(() => {
     return () => {
@@ -435,6 +456,7 @@ export default function Command() {
     setProcessingElapsed(0);
     setSkipAutoAction(false);
     setSkipSaveToHistory(false);
+    setAutoActionStatus("idle");
     autoActionExecutedRef.current = false;
   };
 
@@ -546,11 +568,22 @@ export default function Command() {
         return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}${processingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
 
       case State.DONE:
+        if (autoActionActive && autoActionStatus !== "failure") {
+          const activeAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
+          const autoActionEmoji = autoActionStatus === "success" ? "✅" : "🔄";
+          const progressDots = autoActionStatus === "success" ? "" : getAnimatedDots(animationTick);
+          const headline =
+            autoActionStatus === "success"
+              ? `${autoActionEmoji} ${activeAutoActionText} complete`
+              : `${autoActionEmoji} ${activeAutoActionText} in progress${progressDots}`;
+          return `## ${headline}\n\nYour transcription is handled via ${activeAutoActionText.toLowerCase()}.\n\nYou can stay on this screen or start a new recording whenever you're ready.`;
+        }
+
         const languageEmoji = "🌐";
         const audioTime = duration.toFixed(1);
         const transcriptionTime = transcriptionDuration.toFixed(1);
         const doneAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
-        const doneAutoAction = autoAction !== "none" 
+        const doneAutoAction = autoActionEnabled
           ? ` · 🔄 ${skipAutoAction ? `~~\`${doneAutoActionText}\`~~` : `\`${doneAutoActionText}\``}`
           : "";
         return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
