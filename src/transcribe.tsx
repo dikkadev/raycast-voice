@@ -37,7 +37,7 @@ const formatElapsed = (seconds: number) => {
 };
 
 export default function Command() {
-  const pasteShortcut: Keyboard.Shortcut = { modifiers: ["shift"], key: "enter" };
+  const copyShortcut: Keyboard.Shortcut = { modifiers: ["ctrl"], key: "c" };
 
   const [state, setState] = useState<State>(State.IDLE);
   const [transcription, setTranscription] = useState("");
@@ -205,7 +205,7 @@ export default function Command() {
         return `## Processing...\n\nTranscribing audio...`;
 
       case State.DONE:
-        return `${transcription}\n\n---\n\n\`${language}\` · \`${duration.toFixed(1)}s\`\n\n**Copy** (Enter) · **Paste** (⇧ Enter)`;
+        return `${transcription}\n\n---\n\n\`${language}\` · \`${duration.toFixed(1)}s\`\n\n**Paste** (Enter) · **Copy** (⌃ C)`;
 
       case State.ERROR:
         return `## Error\n\n${error}\n\n---\n\nCheck server and try again.`;
@@ -241,12 +241,12 @@ export default function Command() {
       case State.DONE:
         return (
           <ActionPanel>
-            <Action title="Copy" icon={Icon.Clipboard} onAction={copy} />
-            <Action title="Paste" icon={Icon.Text} onAction={paste} shortcut={pasteShortcut} />
+            <Action title="Paste" icon={Icon.Text} onAction={paste} />
+            <Action title="Copy" icon={Icon.Clipboard} onAction={copy} shortcut={copyShortcut} />
             <Action.Push
               title="Edit Transcription"
               icon={Icon.Pencil}
-              shortcut={{ modifiers: ["cmd"], key: "e" }}
+              shortcut={{ modifiers: ["ctrl"], key: "e" }}
               target={<EditTranscriptionForm initialText={transcription} onSave={setTranscription} />}
             />
             <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["cmd"], key: "n" }} />
