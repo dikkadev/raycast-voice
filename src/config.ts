@@ -4,6 +4,8 @@
  */
 
 import { getPreferenceValues } from "@raycast/api";
+import { statSync } from "fs";
+import * as path from "path";
 
 // Preferences interface matching package.json
 export interface TranscribePreferences {
@@ -37,6 +39,9 @@ const config = getConfig();
 
 // Backend directory from preferences
 export const BACKEND_DIR = config.backendDirectory;
+
+// Backend/server build identifier (must stay in sync with Python backend)
+export const SERVER_BUILD_ID = "2025-11-29-cancel-endpoint";
 
 // Server configuration
 export const SERVER_HOST = "127.0.0.1";
@@ -104,5 +109,20 @@ export function getServerConfig(): ServerConfig {
  */
 export function getConfigFingerprint(): string {
   const cfg = getConfig();
-  return `${cfg.whisperModel}|${cfg.computeDevice}|${cfg.serverPort}`;
+  const backendSignature = getBackendCodeSignature(cfg.backendDirectory);
+  return `${cfg.whisperModel}|${cfg.computeDevice}|${cfg.serverPort}|${backendSignature}`;
+}
+
+function getBackendCodeSignature(dir?: string): string {
+  if (!dir) {
+    return "no-backend-dir";
+  }
+
+  try {
+    const serverPath = path.join(dir, "transcription_server.py");
+    const stats = statSync(serverPath);
+    return `${stats.mtimeMs}-${stats.size}`;
+  } catch {
+    return "backend-missing";
+  }
 }

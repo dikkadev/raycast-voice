@@ -43,6 +43,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class SuppressAudioLevelAccess(logging.Filter):
+    """Filter uvicorn access logs to avoid spamming /record/level hits."""
+
+    TARGET_PATH = "/record/level"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        # Keep log if we cannot parse or if it's not the audio level endpoint
+        return self.TARGET_PATH not in message
+
+
+logging.getLogger("uvicorn.access").addFilter(SuppressAudioLevelAccess())
+
 # Parse command line arguments for configuration
 def parse_args():
     """Parse command line arguments for server configuration"""
@@ -89,6 +103,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Build identifier used by the Raycast extension to ensure backend/frontend compatibility
+SERVER_BUILD_ID = "2025-11-29-cancel-endpoint"
+
 # Global model and recording state
 model: Optional[WhisperModel] = None
 model_load_error: Optional[str] = None
@@ -101,6 +118,37 @@ recording_start_time: Optional[float] = None
 # Audio level tracking (thread-safe)
 audio_level: float = 0.0
 audio_level_lock: threading.Lock = threading.Lock()
+
+
+def _stop_recording_thread():
+    """Helper to stop the background recording thread safely"""
+    global recording_thread, recording_stop_event, audio_level
+
+    if recording_stop_event:
+        recording_stop_event.set()
+
+    if recording_thread and recording_thread.is_alive():
+        recording_thread.join(timeout=5.0)
+
+    recording_thread = None
+    recording_stop_event = None
+
+    with audio_level_lock:
+        # Reset cached audio level so frontend meters clear immediately
+        audio_level = 0.0
+
+
+def _discard_recording_file():
+    """Delete the temporary recording file if it exists"""
+    global recording_file_path
+
+    if recording_file_path and os.path.exists(recording_file_path):
+        try:
+            os.unlink(recording_file_path)
+        except Exception:
+            pass
+
+    recording_file_path = None
 
 
 def check_cuda_available() -> bool:
@@ -212,6 +260,7 @@ async def health_check():
         "model_loaded": model is not None,
         "model_error": model_load_error,
         "recording": recording_thread is not None and recording_thread.is_alive(),
+        "build_id": SERVER_BUILD_ID,
     }
 
 
@@ -326,15 +375,7 @@ async def stop_recording_and_transcribe():
     if recording_thread is None or recording_stop_event is None or recording_file_path is None:
         raise HTTPException(status_code=400, detail="No recording in progress")
 
-    recording_stop_event.set()
-    recording_thread.join(timeout=5.0)
-
-    recording_thread = None
-    recording_stop_event = None
-    
-    # Reset audio level when recording stops
-    with audio_level_lock:
-        audio_level = 0.0
+    _stop_recording_thread()
 
     if not os.path.exists(recording_file_path):
         raise HTTPException(status_code=500, detail="Recorded file not found")
@@ -370,11 +411,24 @@ async def stop_recording_and_transcribe():
         logger.error(f"Transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
-        try:
-            if os.path.exists(recording_file_path):
-                os.unlink(recording_file_path)
-        except Exception:
-            pass
+        _discard_recording_file()
+
+
+@app.post("/record/cancel")
+async def cancel_recording():
+    """Cancel an in-progress recording without transcribing"""
+    global recording_file_path, recording_start_time
+
+    if recording_thread is None or recording_stop_event is None:
+        logger.info("Cancel requested but no active recording")
+        return {"status": "no_recording"}
+
+    _stop_recording_thread()
+    _discard_recording_file()
+    recording_start_time = None
+
+    logger.info("Recording cancelled and discarded")
+    return {"status": "recording_cancelled"}
 
 
 @app.post("/shutdown")
@@ -404,8 +458,10 @@ async def root():
             "POST /record/start - Start recording",
             "GET  /record/level - Get current audio level (0.0-1.0)",
             "POST /record/stop - Stop recording and transcribe",
+            "POST /record/cancel - Cancel recording without transcribing",
             "POST /shutdown - Gracefully stop server",
-        ]
+        ],
+        "build_id": SERVER_BUILD_ID,
     }
 
 

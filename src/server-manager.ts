@@ -5,7 +5,7 @@
 
 import { execa, ResultPromise } from "execa";
 import axios from "axios";
-import { BACKEND_DIR, SERVER_URL, SERVER_PORT, getServerConfig, getConfigFingerprint } from "./config";
+import { BACKEND_DIR, SERVER_URL, SERVER_PORT, getServerConfig, getConfigFingerprint, SERVER_BUILD_ID } from "./config";
 import * as net from "net";
 
 const HEALTH_ENDPOINT = `${SERVER_URL}/health`;
@@ -28,6 +28,7 @@ export interface ServerStatus {
   computeType?: string;
   configMismatch?: boolean;
   deviceFallback?: boolean;
+  buildId?: string | null;
 }
 
 /**
@@ -192,6 +193,7 @@ export async function getServerStatus(): Promise<ServerStatus> {
     computeType: data.compute_type as string,
     configMismatch,
     deviceFallback,
+    buildId: (data.build_id as string) || null,
   };
 }
 
@@ -371,6 +373,14 @@ export async function ensureServerRunning(): Promise<void> {
   const status = await getServerStatus();
 
   if (status.running && status.isOurServer) {
+    if (!status.buildId || status.buildId !== SERVER_BUILD_ID) {
+      console.log(
+        `Backend build mismatch detected (running=${status.buildId || "unknown"}, expected=${SERVER_BUILD_ID}). Restarting...`
+      );
+      await restartServer();
+      return;
+    }
+
     // If we previously launched the server, compare fingerprints to detect preference changes
     if (currentConfigFingerprint && currentConfigFingerprint !== desiredFingerprint) {
       console.log("Preferences updated, restarting server...");

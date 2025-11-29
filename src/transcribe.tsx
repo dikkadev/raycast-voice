@@ -13,7 +13,13 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { useEffect, useState, useRef } from "react";
-import { startBackendRecording, stopRecordingAndTranscribe, getAudioLevel } from "./transcription-client";
+import {
+  startBackendRecording,
+  stopRecordingAndTranscribe,
+  getAudioLevel,
+  cancelBackendRecording,
+  CancelEndpointUnavailableError,
+} from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
 import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate } from "./config";
 
@@ -52,6 +58,7 @@ export default function Command() {
   const hasStarted = useRef(false);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioLevelPollingRef = useRef<NodeJS.Timeout | null>(null);
+  const activeStateRef = useRef<State>(State.IDLE);
 
   // Initialize on mount
   useEffect(() => {
@@ -121,6 +128,30 @@ export default function Command() {
     };
   }, [state, maxAudioLevel]);
 
+  useEffect(() => {
+    activeStateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    return () => {
+      if (activeStateRef.current === State.RECORDING) {
+        cancelBackendRecording()
+          .catch((err) => {
+            if (err instanceof CancelEndpointUnavailableError) {
+              restartServer().catch((restartErr) => {
+                console.error("Failed to restart server during cleanup:", restartErr);
+              });
+            } else {
+              console.error("Failed to cancel recording during cleanup:", err);
+            }
+          })
+          .finally(() => {
+            activeStateRef.current = State.IDLE;
+          });
+      }
+    };
+  }, []);
+
   const checkServer = async () => {
     setState(State.CHECKING);
     const status = await getServerStatus();
@@ -140,6 +171,18 @@ export default function Command() {
 
       const status = await getServerStatus();
       setServerInfo(status);
+
+      try {
+        await cancelBackendRecording();
+      } catch (cleanupErr) {
+        if (cleanupErr instanceof CancelEndpointUnavailableError) {
+          // Backend will be restarted in ensureServerRunning due to build mismatch,
+          // but log just in case.
+          console.warn("Cancel endpoint unavailable during start cleanup.");
+        } else {
+          console.warn("Failed to clear previous recording state:", cleanupErr);
+        }
+      }
 
       setState(State.RECORDING);
       setRecordingStart(Date.now());
@@ -205,6 +248,37 @@ export default function Command() {
     setRecordingElapsed(0);
     setAudioLevel(0.0);
     setMaxAudioLevel(0.0);
+  };
+
+  const cancelRecording = async () => {
+    try {
+      await showToast({ style: Toast.Style.Animated, title: "Cancelling recording..." });
+      await cancelBackendRecording();
+      reset();
+      await showToast({ style: Toast.Style.Success, title: "Recording cancelled" });
+    } catch (err) {
+      console.error("Failed to cancel recording:", err);
+      if (err instanceof CancelEndpointUnavailableError) {
+        await showToast({
+          style: Toast.Style.Animated,
+          title: "Updating backend...",
+          message: "Restarting server to enable cancel support",
+        });
+        await restartServer();
+        reset();
+        await showToast({
+          style: Toast.Style.Success,
+          title: "Server updated",
+          message: "Cancel recording again if needed",
+        });
+        return;
+      }
+
+      setState(State.ERROR);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      await showToast({ style: Toast.Style.Failure, title: "Cancel failed", message });
+    }
   };
 
   const maybeReturnToRoot = async () => {
@@ -290,7 +364,7 @@ export default function Command() {
         return (
           <ActionPanel>
             <Action title="Stop & Transcribe" icon={Icon.Stop} onAction={stopRecording} />
-            <Action title="Cancel" icon={Icon.XMarkCircle} onAction={reset} />
+            <Action title="Cancel" icon={Icon.XMarkCircle} onAction={cancelRecording} />
           </ActionPanel>
         );
 

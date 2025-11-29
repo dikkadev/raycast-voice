@@ -21,6 +21,13 @@ export interface ServerConfig {
   port: number;
 }
 
+export class CancelEndpointUnavailableError extends Error {
+  constructor() {
+    super("cancel_endpoint_unavailable");
+    this.name = "CancelEndpointUnavailableError";
+  }
+}
+
 /**
  * Start backend microphone recording
  */
@@ -102,5 +109,25 @@ export async function getAudioLevel(): Promise<number> {
   } catch (error) {
     // If recording isn't active or endpoint fails, return 0
     return 0.0;
+  }
+}
+
+/**
+ * Cancel backend recording without transcribing
+ */
+export async function cancelBackendRecording(): Promise<void> {
+  const url = `${SERVER_URL}/record/cancel`;
+  try {
+    await axios.post(url, null, { timeout: 5000 });
+  } catch (error) {
+    console.error("Failed to cancel backend recording:", error);
+    if (axios.isAxiosError(error)) {
+      const message = error.response?.data?.detail || error.message;
+      if (error.response?.status === 404) {
+        throw new CancelEndpointUnavailableError();
+      }
+      throw new Error(`Failed to cancel recording: ${message}`);
+    }
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
