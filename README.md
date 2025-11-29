@@ -8,8 +8,10 @@ A high-performance Raycast extension for Windows that records audio and transcri
 - **CUDA Acceleration**: Uses NVIDIA GPU for lightning-fast transcription.
 - **One-Click Workflow**: Record -> Transcribe -> Copy/Paste.
 - **Auto-Start**: Server automatically starts when you use the extension.
+- **Auto-Action**: Automatically paste or copy transcription when complete (configurable, can be skipped).
 - **Multi-Language**: Auto-detects languages (Whisper supports 99+ languages).
 - **Customizable**: Choose your model size (Tiny to Large) and compute device (CUDA/CPU).
+- **Visual Feedback**: Real-time audio level indicator and recording timer.
 
 ## 📋 Prerequisites
 
@@ -53,12 +55,16 @@ This installs:
 2.  **Start Recording**:
     *   If "Auto-start" is enabled (default), recording begins immediately.
     *   Otherwise, press `Enter` to start.
-3.  **Speak** your text.
+3.  **Speak** your text. Watch the audio level indicator to see your input.
 4.  **Stop**: Press `Enter` again or select "Stop & Transcribe".
 5.  **Result**:
-    *   **Copy**: Press `Enter`.
-    *   **Paste**: Press `Shift + Enter` to paste directly into the active window.
-    *   **Edit**: Press `Cmd/Ctrl + E` to make corrections before copying.
+    *   If **Auto-action** is enabled (Paste or Copy), the action executes automatically when transcription completes.
+    *   To skip auto-action during recording or processing, press `Ctrl+A` or use the "Skip Auto-Action" button.
+    *   The UI shows the configured auto-action (e.g., "🔄 Auto-paste") and displays it with strikethrough when disabled.
+    *   **Manual actions** (if auto-action is skipped or disabled):
+        *   **Paste**: Press `Enter` or click "Paste" to paste directly into the active window.
+        *   **Copy**: Press `Ctrl+C` or click "Copy" to copy to clipboard.
+        *   **Edit**: Press `Ctrl+E` to make corrections before copying or pasting.
 
 ## ⚙️ Configuration
 
@@ -70,6 +76,9 @@ Go to **Raycast Settings** > **Extensions** > **Voice Transcription** to configu
 | **Whisper Model** | Model size (`tiny`, `base`, `small`, `medium`, `large-v3`). Larger models are more accurate but slower. | `base` |
 | **Compute Device** | `CUDA` (GPU) or `CPU`. CUDA is significantly faster. | `CUDA` |
 | **Auto-start** | Start recording immediately when the command is opened. | `true` |
+| **Auto-action After Transcription** | Automatically execute `Paste` or `Copy` when transcription completes. Set to `None` to disable. | `None` |
+| **Return to Root After Action** | Close Raycast after copy or paste actions. | `false` |
+| **Audio Level Polling Rate (ms)** | How often to update audio level indicator (25-250ms). Set to `0` to disable. | `100` |
 | **Server Port** | Port for the local transcription server. | `51234` |
 
 ## 🏗️ Architecture

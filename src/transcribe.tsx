@@ -494,7 +494,7 @@ export default function Command() {
         const recordingSkipIndicator = autoAction !== "none" && skipAutoAction ? "\n\n⏸️ Auto-action disabled" : "";
         const autoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
         const recordingAutoAction = autoAction !== "none" 
-          ? ` · 🔄 ${skipAutoAction ? `\`~~${autoActionText}~~\`` : `\`${autoActionText}\``}`
+          ? ` · 🔄 ${skipAutoAction ? `~~\`${autoActionText}\`~~` : `\`${autoActionText}\``}`
           : "";
         
         return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
@@ -507,7 +507,7 @@ export default function Command() {
         const processingSkipIndicator = autoAction !== "none" && skipAutoAction ? "\n\n⏸️ Auto-action disabled" : "";
         const processingAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
         const processingAutoAction = autoAction !== "none" 
-          ? ` · 🔄 ${skipAutoAction ? `\`~~${processingAutoActionText}~~\`` : `\`${processingAutoActionText}\``}`
+          ? ` · 🔄 ${skipAutoAction ? `~~\`${processingAutoActionText}\`~~` : `\`${processingAutoActionText}\``}`
           : "";
         return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
 
@@ -517,7 +517,7 @@ export default function Command() {
         const transcriptionTime = transcriptionDuration.toFixed(1);
         const doneAutoActionText = autoAction === "paste" ? "Auto-paste" : "Auto-copy";
         const doneAutoAction = autoAction !== "none" 
-          ? ` · 🔄 ${skipAutoAction ? `\`~~${doneAutoActionText}~~\`` : `\`${doneAutoActionText}\``}`
+          ? ` · 🔄 ${skipAutoAction ? `~~\`${doneAutoActionText}\`~~` : `\`${doneAutoActionText}\``}`
           : "";
         return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
 

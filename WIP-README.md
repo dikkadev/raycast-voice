@@ -42,6 +42,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Recording timer** - Elapsed time indicator while capturing audio
 - [x] **Audio level indicator** - Basic implementation (needs UI improvements)
 - [x] **Full UI redesign** - Complete UI overhaul with modern, polished design including improved audio level indicator with smooth animations, better visual hierarchy and spacing, enhanced state transitions and animations, more intuitive layout and information display, and professional, polished appearance
+- [x] **Auto-action display** - Shows configured auto-action (paste/copy) in UI with visual indicator when disabled
 
 ### Actions Available
 - [x] **Copy** - Copies transcription text to clipboard
@@ -52,6 +53,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Open Preferences** - Quick access to extension settings
 - [x] **Enter key to stop** - Primary action triggered on Enter
 - [x] **Edit transcription** - Modify text before copying or pasting
+- [x] **Auto-action after transcription** - Automatically execute paste or copy when transcription completes (configurable, can be skipped during recording/processing with Ctrl+A)
 
 ### Backend Features
 - [x] **CUDA support** - GPU acceleration using NVIDIA CUDA
@@ -69,13 +71,13 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Auto-start toggle** - Enable/disable auto-start recording
 - [x] **Model selection** - Dropdown: tiny, base, small, medium, large
 - [x] **Device selection** - Dropdown: CUDA (GPU) or CPU
+- [x] **Auto-action** - Dropdown: None, Paste, Copy (default: None)
+- [x] **Return to root** - Toggle to close Raycast after copy/paste actions
+- [x] **Audio level polling rate** - Configurable rate for audio level indicator (25-250ms, or 0 to disable)
 
 ---
 
 ## ❌ Not Implemented / TODO
-
-### User Experience Improvements
-- [ ] **Auto-action after transcription** - Option to automatically execute an action (e.g., paste, copy) when transcription completes. Default: none. E.g. If set to "paste", it behaves as if the user clicked paste immediately after finishing transcription.
 
 ### Error Handling & Robustness
 - [ ] **Better error messages** - More specific error handling and user-friendly messages
@@ -150,6 +152,9 @@ All configuration is done via Raycast Extension Preferences (no environment vari
 | Auto-start Recording | Checkbox | ✓ On | Start recording when command opens |
 | Whisper Model | Dropdown | Base | Model size (tiny/base/small/medium/large) |
 | Compute Device | Dropdown | CUDA | GPU (CUDA) or CPU |
+| Return to Root After Action | Checkbox | ✗ Off | Close Raycast after copy or paste |
+| Audio Level Polling Rate (ms) | Text | 100 | How often to update audio level indicator (25-250ms, 0 to disable) |
+| Auto-action After Transcription | Dropdown | None | Automatically execute paste or copy when transcription completes |
 
 ---
 
@@ -187,6 +192,3 @@ If CUDA is selected but unavailable, the server automatically falls back to CPU.
 - `sounddevice` - Audio recording
 - `soundfile` - Audio file I/O
 
----
-
-_Last Updated: November 2024_
