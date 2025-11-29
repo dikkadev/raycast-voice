@@ -3,7 +3,7 @@
   "name": "voice",
   "title": "Voice Transcription",
   "description": "Quick, high-quality local voice transcription using Whisper",
-  "icon": "extension-icon.png",
+  "icon": "extension_icon.png",
   "license": "GPL-3.0",
   "commands": [
     {
