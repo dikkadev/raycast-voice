@@ -59,7 +59,9 @@ This installs:
 4.  **Stop**: Press `Enter` again or select "Stop & Transcribe".
 5.  **Result**:
     *   If **Auto-action** is enabled (Paste or Copy), the action executes automatically when transcription completes.
-    *   To skip auto-action during recording or processing, press `Ctrl+A` or use the "Skip Auto-Action" button.
+    *   You can skip auto-action at any time:
+        *   **While listening** (during recording): Press `Ctrl+A` or use the "Skip Auto-Action" button. (Note: `Enter` stops recording, not skip.)
+        *   **While transcribing** (during processing): Press `Enter` or `Ctrl+A` or use the "Skip Auto-Action" button. (The skip action is the primary action, so `Enter` triggers it automatically.)
     *   The UI shows the configured auto-action (e.g., "🔄 Auto-paste") and displays it with strikethrough when disabled.
     *   **Manual actions** (if auto-action is skipped or disabled):
         *   **Paste**: Press `Enter` or click "Paste" to paste directly into the active window.
