@@ -84,10 +84,6 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 ### Error Handling & Robustness
 - [ ] **Better error messages** - More specific error handling and user-friendly messages
 
-### Keyboard Shortcuts
-- [ ] **Command+H hotkey for history** - Add keyboard shortcut to access history view
-- [ ] **Command+N hotkey for new recording** - Add keyboard shortcut to start new recording
-
 ---
 
 ## 🚫 Intentionally Omitted

@@ -24,6 +24,7 @@ export interface ServerStatus {
   isOurServer: boolean;
   portInUse?: boolean;
   model?: string;
+  liveModel?: string;
   device?: string;
   computeType?: string;
   configMismatch?: boolean;
@@ -164,9 +165,10 @@ export async function getServerStatus(): Promise<ServerStatus> {
   const expectedConfig = getServerConfig();
 
   const modelMismatch = data.model !== expectedConfig.model;
+  const liveModelMismatch = data.live_model !== expectedConfig.liveModel;
   const deviceDiffers = data.device !== expectedConfig.device;
 
-  let configMismatch = modelMismatch;
+  let configMismatch = modelMismatch || liveModelMismatch;
   let deviceFallback = false;
 
   if (!configMismatch) {
@@ -189,6 +191,7 @@ export async function getServerStatus(): Promise<ServerStatus> {
     isOurServer: true,
     portInUse: true,
     model: data.model as string,
+    liveModel: (data.live_model as string) || undefined,
     device: data.device as string,
     computeType: data.compute_type as string,
     configMismatch,
@@ -216,7 +219,7 @@ async function launchServer(): Promise<void> {
 
   const config = getServerConfig();
   console.log(`Starting server from: ${BACKEND_DIR}`);
-  console.log(`Config: model=${config.model}, device=${config.device}, port=${config.port}`);
+  console.log(`Config: model=${config.model}, liveModel=${config.liveModel}, device=${config.device}, port=${config.port}`);
 
   try {
     // Start server using UV with command line arguments
@@ -236,6 +239,8 @@ async function launchServer(): Promise<void> {
         config.device,
         "--compute-type",
         config.computeType,
+        "--live-model",
+        config.liveModel,
       ],
       {
         cwd: BACKEND_DIR,

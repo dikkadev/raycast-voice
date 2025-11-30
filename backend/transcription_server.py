@@ -34,6 +34,11 @@ import threading
 import time
 import numpy as np
 
+# Audio / preview configuration
+RECORDER_SAMPLERATE = 16000
+RECORDER_CHANNELS = 1
+LIVE_PREVIEW_MIN_DURATION = 1.0  # seconds
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -65,6 +70,7 @@ def parse_args():
     parser.add_argument("--model", default="base", help="Whisper model size")
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"], help="Compute device")
     parser.add_argument("--compute-type", default=None, help="Compute type (auto-detected if not set)")
+    parser.add_argument("--live-model", default="tiny", help="Whisper model used for live preview")
     return parser.parse_args()
 
 # Server configuration (will be set from command line args)
@@ -74,6 +80,7 @@ class ServerConfig:
     model_size: str = "base"
     device: str = "cuda"
     compute_type: str = "float16"
+    live_model: str = "tiny"
     
     @classmethod
     def from_args(cls, args):
@@ -81,6 +88,7 @@ class ServerConfig:
         cls.port = args.port
         cls.model_size = args.model
         cls.device = args.device
+        cls.live_model = args.live_model or "tiny"
         # Auto-detect compute type based on device
         if args.compute_type:
             cls.compute_type = args.compute_type
@@ -107,6 +115,8 @@ SERVER_BUILD_ID = "2025-11-29-cancel-endpoint"
 # Global model and recording state
 model: Optional[WhisperModel] = None
 model_load_error: Optional[str] = None
+live_model_instance: Optional[WhisperModel] = None
+live_model_load_error: Optional[str] = None
 
 recording_thread: Optional[threading.Thread] = None
 recording_stop_event: Optional[threading.Event] = None
@@ -150,6 +160,24 @@ def _clear_recording_buffer():
     recording_buffer_lock = None
 
 
+def _copy_recording_audio() -> Optional[np.ndarray]:
+    """Snapshot the current in-memory audio buffer"""
+    global recording_audio_buffer, recording_buffer_lock
+
+    if recording_audio_buffer is None or recording_buffer_lock is None:
+        return None
+
+    with recording_buffer_lock:
+        if not recording_audio_buffer:
+            return None
+        copied_chunks = [chunk.copy() for chunk in recording_audio_buffer]
+
+    audio_data = np.concatenate(copied_chunks, axis=0)
+    if audio_data.dtype != np.float32:
+        audio_data = audio_data.astype(np.float32)
+    return audio_data
+
+
 def check_cuda_available() -> bool:
     """Check if CUDA is available"""
     try:
@@ -160,53 +188,94 @@ def check_cuda_available() -> bool:
         return True  # Optimistic - faster-whisper will handle it
 
 
-def load_model():
-    """Load the Whisper model with configured device"""
-    global model, model_load_error
-    
-    if model is not None:
-        return
-    
-    device = config.device
-    compute_type = config.compute_type
-    
-    # Try CUDA first, fall back to CPU if it fails
+def _load_whisper_model_instance(model_name: str, preferred_device: str, preferred_compute: str, tag: str):
+    """Load a Whisper model, falling back to CPU when CUDA fails."""
+    device = preferred_device
+    compute_type = preferred_compute
+
     if device == "cuda":
         try:
-            logger.info(f"Loading Whisper model: {config.model_size} on cuda with {compute_type}")
-            model = WhisperModel(
-                config.model_size,
+            logger.info(f"Loading {tag} model: {model_name} on cuda with {compute_type}")
+            instance = WhisperModel(
+                model_name,
                 device="cuda",
                 compute_type=compute_type,
                 download_root=None,
             )
-            logger.info("Model loaded successfully on CUDA")
-            return
+            logger.info(f"{tag.title()} model loaded on CUDA")
+            return instance, "cuda", compute_type
         except Exception as e:
-            logger.warning(f"CUDA load failed: {e}, falling back to CPU")
+            logger.warning(f"{tag.title()} CUDA load failed: {e}, falling back to CPU")
             device = "cpu"
             compute_type = "int8"
-    
-    # CPU fallback or explicit CPU mode
+
     try:
-        logger.info(f"Loading Whisper model: {config.model_size} on cpu with {compute_type}")
-        model = WhisperModel(
-            config.model_size,
+        logger.info(f"Loading {tag} model: {model_name} on cpu with {compute_type}")
+        instance = WhisperModel(
+            model_name,
             device="cpu",
             compute_type=compute_type,
             download_root=None,
         )
-        # Update config to reflect actual device used
-        config.device = "cpu"
-        config.compute_type = compute_type
-        logger.info("Model loaded successfully on CPU")
+        logger.info(f"{tag.title()} model loaded on CPU")
+        return instance, "cpu", compute_type
     except Exception as e:
-        model_load_error = str(e)
-        logger.error(f"Failed to load model: {e}")
+        logger.error(f"Failed to load {tag} model: {e}")
         raise
 
 
-def _record_audio_worker(stop_event: threading.Event, audio_buffer: list, buffer_lock: threading.Lock, samplerate: int = 16000, channels: int = 1):
+def load_models():
+    """Load primary and live preview Whisper models"""
+    global model, live_model_instance, model_load_error, live_model_load_error
+
+    if model is None:
+        try:
+            primary_model, actual_device, actual_compute = _load_whisper_model_instance(
+                config.model_size,
+                config.device,
+                config.compute_type,
+                tag="primary",
+            )
+            model = primary_model
+            config.device = actual_device
+            config.compute_type = actual_compute
+            model_load_error = None
+        except Exception as e:
+            model_load_error = str(e)
+            raise
+
+    if live_model_instance is None:
+        if config.live_model == config.model_size:
+            live_model_instance = model
+            live_model_load_error = None
+            logger.info("Live preview reusing primary model instance")
+            return
+
+        preferred_device = config.device
+        preferred_compute = config.compute_type if config.device == "cuda" else "int8"
+
+        try:
+            preview_model, _, _ = _load_whisper_model_instance(
+                config.live_model,
+                preferred_device,
+                preferred_compute,
+                tag="live preview",
+            )
+            live_model_instance = preview_model
+            live_model_load_error = None
+        except Exception as e:
+            live_model_load_error = str(e)
+            # Do not raise - live preview is optional
+            logger.error(f"Failed to load live preview model: {e}")
+
+
+def _record_audio_worker(
+    stop_event: threading.Event,
+    audio_buffer: list,
+    buffer_lock: threading.Lock,
+    samplerate: int = RECORDER_SAMPLERATE,
+    channels: int = RECORDER_CHANNELS,
+):
     """Background worker that records from default microphone to an in-memory buffer"""
     def callback(indata, frames, time_info, status):
         global audio_level
@@ -238,7 +307,7 @@ def _record_audio_worker(stop_event: threading.Event, audio_buffer: list, buffer
 @app.on_event("startup")
 async def startup_event():
     """Initialize model on server startup"""
-    load_model()
+    load_models()
     logger.info(f"Server ready on {config.host}:{config.port}")
     logger.info(f"Config: model={config.model_size}, device={config.device}, compute_type={config.compute_type}")
 
@@ -253,6 +322,9 @@ async def health_check():
         "compute_type": config.compute_type,
         "model_loaded": model is not None,
         "model_error": model_load_error,
+        "live_model": config.live_model,
+        "live_model_loaded": live_model_instance is not None,
+        "live_model_error": live_model_load_error,
         "recording": recording_thread is not None and recording_thread.is_alive(),
         "build_id": SERVER_BUILD_ID,
     }
@@ -354,6 +426,37 @@ async def get_audio_level():
         level = audio_level
     
     return {"level": level}
+
+
+@app.post("/record/preview")
+async def get_live_preview():
+    """Return live transcription preview using the configured live model"""
+    if recording_thread is None or recording_stop_event is None or recording_audio_buffer is None:
+        return {"text": "", "error": "no_recording"}
+
+    if live_model_instance is None:
+        return {"text": "", "error": live_model_load_error or "live_model_not_loaded"}
+
+    audio_data = _copy_recording_audio()
+    if audio_data is None:
+        return {"text": ""}
+
+    duration_seconds = audio_data.shape[0] / RECORDER_SAMPLERATE
+    if duration_seconds < LIVE_PREVIEW_MIN_DURATION:
+        return {"text": ""}
+
+    try:
+        segments, _ = live_model_instance.transcribe(
+            audio_data,
+            beam_size=3,
+            language=None,
+            task="transcribe",
+        )
+        transcription = " ".join(segment.text for segment in segments).strip()
+        return {"text": transcription}
+    except Exception as e:
+        logger.error(f"Live preview transcription failed: {e}")
+        return {"text": "", "error": str(e)}
 
 
 @app.post("/record/stop")
@@ -459,6 +562,7 @@ async def root():
             "POST /transcribe - Transcribe uploaded audio",
             "POST /record/start - Start recording",
             "GET  /record/level - Get current audio level (0.0-1.0)",
+            "POST /record/preview - Live preview transcription",
             "POST /record/stop - Stop recording and transcribe",
             "POST /record/cancel - Cancel recording without transcribing",
             "POST /shutdown - Gracefully stop server",

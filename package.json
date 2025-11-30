@@ -109,6 +109,36 @@
           "description": "Maximum number of transcriptions to keep in history (1-1000)",
           "default": "50",
           "required": false
+        },
+        {
+          "name": "liveTranscriptionEnabled",
+          "type": "checkbox",
+          "title": "Live Transcription Preview",
+          "label": "Show live text preview while recording",
+          "description": "Visual-only preview that uses a smaller model in parallel. Disable if GPU/CPU is busy.",
+          "default": true,
+          "required": false
+        },
+        {
+          "name": "liveModel",
+          "type": "dropdown",
+          "title": "Live Preview Model",
+          "description": "Smaller Whisper model used for the live preview. Keep this lighter than your main model for faster updates.",
+          "default": "tiny",
+          "required": false,
+          "data": [
+            { "title": "Tiny (recommended for preview)", "value": "tiny" },
+            { "title": "Base", "value": "base" },
+            { "title": "Small", "value": "small" }
+          ]
+        },
+        {
+          "name": "liveUpdateFps",
+          "type": "textfield",
+          "title": "Live Preview Updates / Second",
+          "description": "How many times per second to refresh the live preview (minimum 1). Lower if the system feels busy.",
+          "default": "2",
+          "required": false
         }
       ]
     },

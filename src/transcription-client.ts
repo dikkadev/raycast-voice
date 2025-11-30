@@ -13,6 +13,11 @@ export interface TranscriptionResult {
   duration: number;
 }
 
+export interface LivePreviewResult {
+  text: string;
+  error?: string;
+}
+
 export interface ServerConfig {
   model: string;
   device: string;
@@ -129,5 +134,19 @@ export async function cancelBackendRecording(): Promise<void> {
       throw new Error(`Failed to cancel recording: ${message}`);
     }
     throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+/**
+ * Get the live transcription preview
+ */
+export async function getLivePreview(): Promise<LivePreviewResult | null> {
+  const url = `${SERVER_URL}/record/preview`;
+  try {
+    const response = await axios.post(url, null, { timeout: 10000 });
+    return response.data as LivePreviewResult;
+  } catch (error) {
+    console.error("Live preview request failed:", error);
+    return null;
   }
 }

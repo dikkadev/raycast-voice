@@ -21,9 +21,22 @@ import {
   getAudioLevel,
   cancelBackendRecording,
   CancelEndpointUnavailableError,
+  getLivePreview,
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
-import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory } from "./config";
+import {
+  AUTO_START,
+  WHISPER_MODEL,
+  COMPUTE_DEVICE,
+  RETURN_TO_ROOT,
+  LIVE_TRANSCRIPTION_ENABLED,
+  LIVE_PREVIEW_MIN_DURATION_MS,
+  getAudioLevelPollingRate,
+  getAutoAction,
+  getSaveToHistory,
+  getLivePreviewIntervalMs,
+  getLiveModel,
+} from "./config";
 import { saveTranscription, getTranscriptionById } from "./history-storage";
 import { HistoryDetailView, calculatePerformanceRatio } from "./view-history";
 
@@ -117,17 +130,23 @@ export default function Command() {
   const [skipSaveToHistory, setSkipSaveToHistory] = useState(false);
   const [autoActionStatus, setAutoActionStatus] = useState<AutoActionStatus>("idle");
   const [savedTranscriptionId, setSavedTranscriptionId] = useState<string | null>(null);
+  const [livePreviewText, setLivePreviewText] = useState("");
+  const [livePreviewError, setLivePreviewError] = useState<string | null>(null);
   
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
   const autoActionEnabled = autoAction !== "none";
   const autoActionActive = autoActionEnabled && !skipAutoAction;
+  const livePreviewEnabled = LIVE_TRANSCRIPTION_ENABLED;
+  const livePreviewModel = useMemo(() => getLiveModel(), []);
   
   const hasStarted = useRef(false);
   const autoActionExecutedRef = useRef(false);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioLevelPollingRef = useRef<NodeJS.Timeout | null>(null);
   const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const livePreviewTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const livePreviewRequestInFlightRef = useRef(false);
   const activeStateRef = useRef<State>(State.IDLE);
 
   // Initialize on mount
@@ -231,6 +250,103 @@ export default function Command() {
   useEffect(() => {
     activeStateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    if (state !== State.RECORDING) {
+      setLivePreviewText("");
+      setLivePreviewError(null);
+    }
+  }, [state]);
+
+  useEffect(() => {
+    if (!livePreviewEnabled) {
+      if (livePreviewTimerRef.current) {
+        clearTimeout(livePreviewTimerRef.current);
+        livePreviewTimerRef.current = null;
+      }
+      livePreviewRequestInFlightRef.current = false;
+      setLivePreviewText("");
+      setLivePreviewError(null);
+      return;
+    }
+
+    if (state !== State.RECORDING) {
+      return;
+    }
+
+    let disposed = false;
+    const pollInterval = getLivePreviewIntervalMs();
+
+    function scheduleNext(delayMs: number) {
+      if (disposed) {
+        return;
+      }
+
+      if (livePreviewTimerRef.current) {
+        clearTimeout(livePreviewTimerRef.current);
+        livePreviewTimerRef.current = null;
+      }
+
+      if (delayMs <= 0) {
+        void runPreview();
+        return;
+      }
+
+      livePreviewTimerRef.current = setTimeout(() => {
+        void runPreview();
+      }, delayMs);
+    }
+
+    async function runPreview() {
+      if (disposed || activeStateRef.current !== State.RECORDING) {
+        return;
+      }
+      if (livePreviewRequestInFlightRef.current) {
+        scheduleNext(pollInterval);
+        return;
+      }
+
+      livePreviewRequestInFlightRef.current = true;
+      try {
+        const result = await getLivePreview();
+        if (disposed) {
+          return;
+        }
+
+        if (!result) {
+          setLivePreviewError("Preview unavailable");
+        } else {
+          setLivePreviewError(result.error ?? null);
+          if (typeof result.text === "string") {
+            setLivePreviewText(result.text);
+          }
+        }
+      } catch (err) {
+        if (!disposed) {
+          const message = err instanceof Error ? err.message : String(err);
+          setLivePreviewError(message);
+        }
+      } finally {
+        livePreviewRequestInFlightRef.current = false;
+        if (!disposed) {
+          scheduleNext(pollInterval);
+        }
+      }
+    }
+
+    const elapsedSinceStart = recordingStart ? Date.now() - recordingStart : 0;
+    const initialDelay = Math.max(LIVE_PREVIEW_MIN_DURATION_MS - elapsedSinceStart, 0);
+    scheduleNext(initialDelay);
+
+    return () => {
+      disposed = true;
+      if (livePreviewTimerRef.current) {
+        clearTimeout(livePreviewTimerRef.current);
+        livePreviewTimerRef.current = null;
+      }
+      livePreviewRequestInFlightRef.current = false;
+    };
+  }, [state, livePreviewEnabled, recordingStart]);
 
   // Animation tick for loading states
   useEffect(() => {
@@ -465,6 +581,13 @@ export default function Command() {
     setSkipSaveToHistory(false);
     setAutoActionStatus("idle");
     setSavedTranscriptionId(null);
+    setLivePreviewText("");
+    setLivePreviewError(null);
+    if (livePreviewTimerRef.current) {
+      clearTimeout(livePreviewTimerRef.current);
+      livePreviewTimerRef.current = null;
+    }
+    livePreviewRequestInFlightRef.current = false;
     autoActionExecutedRef.current = false;
   };
 
@@ -559,8 +682,18 @@ export default function Command() {
         const recordingAutoAction = autoAction !== "none" 
           ? ` · 🔄 ${skipAutoAction ? `~~\`${autoActionText}\`~~` : `\`${autoActionText}\``}`
           : "";
+        const previewModelLabel = livePreviewEnabled ? ` · 👁️ ${livePreviewModel}` : "";
+        const livePreviewSection = livePreviewEnabled
+          ? `\n\n${
+              livePreviewError
+                ? `⚠️ *Live preview unavailable*: ${livePreviewError}`
+                : livePreviewText
+                ? livePreviewText
+                : "_Live preview warming up..._"
+            }\n\n`
+          : "\n\n";
         
-        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}${recordingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
+        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}${livePreviewSection}\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}${recordingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${previewModelLabel}${recordingAutoAction}`;
 
       case State.PROCESSING:
         const clockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];

@@ -19,6 +19,9 @@ export interface TranscribePreferences {
   autoAction?: string;
   saveToHistory?: boolean;
   historyLimit?: string;
+  liveTranscriptionEnabled?: boolean;
+  liveModel?: string;
+  liveUpdateFps?: string;
 }
 
 /**
@@ -35,6 +38,11 @@ export function getConfig(): TranscribePreferences {
     returnToRoot: prefs.returnToRoot ?? false,
     audioLevelPollingRate: prefs.audioLevelPollingRate || "150",
     autoAction: prefs.autoAction || "none",
+    saveToHistory: prefs.saveToHistory ?? true,
+    historyLimit: prefs.historyLimit || "50",
+    liveTranscriptionEnabled: prefs.liveTranscriptionEnabled ?? true,
+    liveModel: prefs.liveModel || "tiny",
+    liveUpdateFps: prefs.liveUpdateFps || "2",
   };
 }
 
@@ -61,6 +69,9 @@ export const AUTO_START = config.autoStart ?? true;
 
 // Return to root preference
 export const RETURN_TO_ROOT = config.returnToRoot ?? false;
+
+// Live transcription toggle
+export const LIVE_TRANSCRIPTION_ENABLED = config.liveTranscriptionEnabled ?? true;
 
 // Auto-action preference (function to read dynamically)
 export function getAutoAction(): string {
@@ -100,6 +111,30 @@ export function getAudioLevelPollingRate(): number {
   return Math.max(25, Math.min(250, rate));
 }
 
+// Live transcription helpers
+export function getLiveModel(): string {
+  const cfg = getConfig();
+  return cfg.liveModel || "tiny";
+}
+
+export function getLiveUpdatesPerSecond(): number {
+  const cfg = getConfig();
+  const fpsStr = cfg.liveUpdateFps || "2";
+  const fps = parseFloat(fpsStr);
+  if (!Number.isFinite(fps) || fps < 1) {
+    return 1;
+  }
+  // Clamp to a reasonable upper bound to avoid overloading the backend
+  return Math.min(fps, 10);
+}
+
+export function getLivePreviewIntervalMs(): number {
+  const fps = getLiveUpdatesPerSecond();
+  return Math.max(100, Math.round(1000 / fps));
+}
+
+export const LIVE_PREVIEW_MIN_DURATION_MS = 1000;
+
 /**
  * Parse port with fallback
  */
@@ -116,6 +151,7 @@ export interface ServerConfig {
   device: string;
   computeType: string;
   port: number;
+  liveModel: string;
 }
 
 /**
@@ -129,6 +165,7 @@ export function getServerConfig(): ServerConfig {
     device: device,
     computeType: device === "cuda" ? "float16" : "int8",
     port: parsePort(cfg.serverPort),
+    liveModel: cfg.liveModel || "tiny",
   };
 }
 
@@ -138,7 +175,10 @@ export function getServerConfig(): ServerConfig {
 export function getConfigFingerprint(): string {
   const cfg = getConfig();
   const backendSignature = getBackendCodeSignature(cfg.backendDirectory);
-  return `${cfg.whisperModel}|${cfg.computeDevice}|${cfg.serverPort}|${backendSignature}`;
+  const liveEnabled = cfg.liveTranscriptionEnabled ?? true;
+  const liveModel = cfg.liveModel || "tiny";
+  const liveFps = cfg.liveUpdateFps || "2";
+  return `${cfg.whisperModel}|${cfg.computeDevice}|${cfg.serverPort}|${liveModel}|${liveEnabled}|${liveFps}|${backendSignature}`;
 }
 
 function getBackendCodeSignature(dir?: string): string {
