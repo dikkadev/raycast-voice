@@ -30,9 +30,7 @@ if os.name == 'nt':
 from faster_whisper import WhisperModel
 
 import sounddevice as sd
-import soundfile as sf
 import threading
-import queue
 import time
 import numpy as np
 
@@ -112,7 +110,8 @@ model_load_error: Optional[str] = None
 
 recording_thread: Optional[threading.Thread] = None
 recording_stop_event: Optional[threading.Event] = None
-recording_file_path: Optional[str] = None
+recording_audio_buffer: Optional[list] = None
+recording_buffer_lock: Optional[threading.Lock] = None
 recording_start_time: Optional[float] = None
 
 # Audio level tracking (thread-safe)
@@ -138,17 +137,17 @@ def _stop_recording_thread():
         audio_level = 0.0
 
 
-def _discard_recording_file():
-    """Delete the temporary recording file if it exists"""
-    global recording_file_path
+def _clear_recording_buffer():
+    """Clear the in-memory audio buffer"""
+    global recording_audio_buffer, recording_buffer_lock
 
-    if recording_file_path and os.path.exists(recording_file_path):
-        try:
-            os.unlink(recording_file_path)
-        except Exception:
-            pass
-
-    recording_file_path = None
+    if recording_buffer_lock:
+        with recording_buffer_lock:
+            recording_audio_buffer = None
+    else:
+        recording_audio_buffer = None
+    
+    recording_buffer_lock = None
 
 
 def check_cuda_available() -> bool:
@@ -207,10 +206,8 @@ def load_model():
         raise
 
 
-def _record_audio_worker(file_path: str, stop_event: threading.Event, samplerate: int = 16000, channels: int = 1):
-    """Background worker that records from default microphone to a WAV file"""
-    q: "queue.Queue[bytes]" = queue.Queue()
-
+def _record_audio_worker(stop_event: threading.Event, audio_buffer: list, buffer_lock: threading.Lock, samplerate: int = 16000, channels: int = 1):
+    """Background worker that records from default microphone to an in-memory buffer"""
     def callback(indata, frames, time_info, status):
         global audio_level
         if status:
@@ -224,18 +221,15 @@ def _record_audio_worker(file_path: str, stop_event: threading.Event, samplerate
         with audio_level_lock:
             audio_level = audio_level_value
         
-        q.put(indata.copy())
+        # Append audio chunk to buffer (thread-safe)
+        with buffer_lock:
+            audio_buffer.append(indata.copy())
 
     try:
-        logger.info(f"Starting audio recording to {file_path}")
-        with sf.SoundFile(file_path, mode="w", samplerate=samplerate, channels=channels) as f:
-            with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback):
-                while not stop_event.is_set():
-                    try:
-                        data = q.get(timeout=0.1)
-                    except queue.Empty:
-                        continue
-                    f.write(data)
+        logger.info("Starting audio recording to memory buffer")
+        with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback):
+            while not stop_event.is_set():
+                time.sleep(0.1)  # Just wait, callback handles everything
         logger.info("Audio recording stopped")
     except Exception as e:
         logger.error(f"Audio recording failed: {e}")
@@ -325,19 +319,14 @@ async def transcribe_audio(file: UploadFile = File(...)):
 @app.post("/record/start")
 async def start_recording():
     """Start recording from default microphone"""
-    global recording_thread, recording_stop_event, recording_file_path, recording_start_time, audio_level
+    global recording_thread, recording_stop_event, recording_audio_buffer, recording_buffer_lock, recording_start_time, audio_level
 
     if recording_thread is not None and recording_thread.is_alive():
         raise HTTPException(status_code=400, detail="Recording already in progress")
 
-    temp_dir = tempfile.gettempdir()
-    recording_file_path = os.path.join(temp_dir, "whisper_recording.wav")
-
-    try:
-        if os.path.exists(recording_file_path):
-            os.unlink(recording_file_path)
-    except Exception:
-        pass
+    # Initialize in-memory audio buffer
+    recording_audio_buffer = []
+    recording_buffer_lock = threading.Lock()
 
     # Reset audio level
     with audio_level_lock:
@@ -346,13 +335,13 @@ async def start_recording():
     recording_stop_event = threading.Event()
     recording_thread = threading.Thread(
         target=_record_audio_worker,
-        args=(recording_file_path, recording_stop_event),
+        args=(recording_stop_event, recording_audio_buffer, recording_buffer_lock),
         daemon=True,
     )
     recording_start_time = time.time()
     recording_thread.start()
 
-    logger.info("Recording started")
+    logger.info("Recording started (in-memory buffer)")
     return {"status": "recording_started"}
 
 
@@ -370,15 +359,12 @@ async def get_audio_level():
 @app.post("/record/stop")
 async def stop_recording_and_transcribe():
     """Stop recording and transcribe"""
-    global recording_thread, recording_stop_event, recording_file_path, recording_start_time, audio_level
+    global recording_thread, recording_stop_event, recording_audio_buffer, recording_buffer_lock, recording_start_time, audio_level
 
-    if recording_thread is None or recording_stop_event is None or recording_file_path is None:
+    if recording_thread is None or recording_stop_event is None or recording_audio_buffer is None or recording_buffer_lock is None:
         raise HTTPException(status_code=400, detail="No recording in progress")
 
     _stop_recording_thread()
-
-    if not os.path.exists(recording_file_path):
-        raise HTTPException(status_code=500, detail="Recorded file not found")
 
     if model is None:
         raise HTTPException(status_code=503, detail=model_load_error or "Model not loaded")
@@ -387,9 +373,25 @@ async def stop_recording_and_transcribe():
     recording_start_time = None
 
     try:
-        logger.info(f"Transcribing recorded audio")
+        # Concatenate all audio chunks into a single numpy array
+        with recording_buffer_lock:
+            if not recording_audio_buffer:
+                raise HTTPException(status_code=500, detail="No audio data recorded")
+            
+            # Concatenate all chunks: each chunk is shape (frames, channels)
+            audio_data = np.concatenate(recording_audio_buffer, axis=0)
+            # Convert to float32 if needed (faster-whisper expects float32)
+            if audio_data.dtype != np.float32:
+                audio_data = audio_data.astype(np.float32)
+            
+            # Clear buffer after extracting data
+            recording_audio_buffer = None
+        
+        logger.info(f"Transcribing recorded audio from memory buffer ({audio_data.shape[0]} frames)")
+        
+        # Transcribe directly from numpy array
         segments, info = model.transcribe(
-            recording_file_path,
+            audio_data,
             beam_size=5,
             language=None,
             task="transcribe",
@@ -411,23 +413,23 @@ async def stop_recording_and_transcribe():
         logger.error(f"Transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
-        _discard_recording_file()
+        _clear_recording_buffer()
 
 
 @app.post("/record/cancel")
 async def cancel_recording():
     """Cancel an in-progress recording without transcribing"""
-    global recording_file_path, recording_start_time
+    global recording_start_time
 
     if recording_thread is None or recording_stop_event is None:
         logger.info("Cancel requested but no active recording")
         return {"status": "no_recording"}
 
     _stop_recording_thread()
-    _discard_recording_file()
+    _clear_recording_buffer()
     recording_start_time = None
 
-    logger.info("Recording cancelled and discarded")
+    logger.info("Recording cancelled and buffer cleared")
     return {"status": "recording_cancelled"}
 
 
