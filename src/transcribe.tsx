@@ -106,8 +106,6 @@ export default function Command() {
   const [serverInfo, setServerInfo] = useState<ServerStatus | null>(null);
   const [recordingStart, setRecordingStart] = useState<number | null>(null);
   const [recordingElapsed, setRecordingElapsed] = useState(0);
-  const [audioLevel, setAudioLevel] = useState(0.0);
-  const [maxAudioLevel, setMaxAudioLevel] = useState(0.0);
   const [audioLevelHistory, setAudioLevelHistory] = useState<number[]>([]);
   const [animationTick, setAnimationTick] = useState(0);
   const [transcriptionStartTime, setTranscriptionStartTime] = useState<number | null>(null);
@@ -187,10 +185,6 @@ export default function Command() {
       const pollAudioLevel = async () => {
         try {
           const rawLevel = await getAudioLevel();
-          setAudioLevel(rawLevel);
-          
-          // Track maximum level seen for adaptive normalization
-          setMaxAudioLevel((prevMax) => Math.max(prevMax, rawLevel));
           
           // Update rolling buffer for waveform
           setAudioLevelHistory((prev) => {
@@ -200,7 +194,6 @@ export default function Command() {
           });
         } catch (error) {
           // Silently fail - audio level is optional
-          setAudioLevel(0.0);
           setAudioLevelHistory((prev) => {
             const updated = [...prev, 0.0];
             return updated.slice(-WAVEFORM_BUFFER_SIZE);
@@ -212,7 +205,6 @@ export default function Command() {
       pollAudioLevel();
       audioLevelPollingRef.current = setInterval(pollAudioLevel, pollingRate);
     } else {
-      setAudioLevel(0.0);
       setAudioLevelHistory([]);
       if (audioLevelPollingRef.current) {
         clearInterval(audioLevelPollingRef.current);
@@ -454,8 +446,6 @@ export default function Command() {
     setDuration(0);
     setRecordingStart(null);
     setRecordingElapsed(0);
-    setAudioLevel(0.0);
-    setMaxAudioLevel(0.0);
     setAudioLevelHistory([]);
     setAnimationTick(0);
     setTranscriptionStartTime(null);
@@ -543,7 +533,7 @@ export default function Command() {
         const startingClockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
         const startingClockEmoji = startingClockEmojis[animationTick % startingClockEmojis.length];
         const startingAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
-        return `## ${startingClockEmoji} Downloading Whisper model${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\`${startingAutoAction}`;
+        return `## ${startingClockEmoji} Loading Whisper model${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\`${startingAutoAction}`;
 
       case State.IDLE:
         const idleAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
@@ -606,14 +596,17 @@ export default function Command() {
 
   const getActions = () => {
     const configMismatch = serverInfo?.configMismatch;
+    const restartAction = <Action title="Restart Server" icon={Icon.RotateClockwise} onAction={handleRestart} />;
 
     switch (state) {
       case State.IDLE:
         return (
           <ActionPanel>
             <Action title="Start Recording" icon={Icon.Microphone} onAction={startRecording} />
-            {configMismatch && (
+            {configMismatch ? (
               <Action title="Restart Server (Config Changed)" icon={Icon.ArrowClockwise} onAction={handleRestart} />
+            ) : (
+              restartAction
             )}
             <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
           </ActionPanel>
@@ -640,6 +633,7 @@ export default function Command() {
                 shortcut={{ modifiers: ["ctrl"], key: "s" }}
               />
             )}
+            {restartAction}
           </ActionPanel>
         );
 
@@ -662,6 +656,7 @@ export default function Command() {
                 shortcut={{ modifiers: ["ctrl"], key: "s" }}
               />
             )}
+            {restartAction}
           </ActionPanel>
         );
 
@@ -696,6 +691,7 @@ export default function Command() {
             />
             <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["ctrl"], key: "n" }} />
             <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
+            {restartAction}
           </ActionPanel>
         );
 
@@ -703,7 +699,7 @@ export default function Command() {
         return (
           <ActionPanel>
             <Action title="Try Again" icon={Icon.ArrowClockwise} onAction={reset} />
-            <Action title="Restart Server" icon={Icon.RotateClockwise} onAction={handleRestart} />
+            {restartAction}
             <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
           </ActionPanel>
         );

@@ -14,7 +14,6 @@ import tempfile
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 # On Windows, we must explicitly add the NVIDIA libraries to the DLL search path
 if os.name == 'nt':
@@ -30,9 +29,7 @@ if os.name == 'nt':
 from faster_whisper import WhisperModel
 
 import sounddevice as sd
-import soundfile as sf
 import threading
-import queue
 import time
 import numpy as np
 
@@ -110,10 +107,19 @@ SERVER_BUILD_ID = "2025-11-29-cancel-endpoint"
 model: Optional[WhisperModel] = None
 model_load_error: Optional[str] = None
 
+SAMPLE_RATE = 16000
+CHANNELS = 1
+MAX_RECORDING_SECONDS = 600  # Hard cap to avoid runaway memory use
+MAX_RECORDING_FRAMES = SAMPLE_RATE * MAX_RECORDING_SECONDS
+
 recording_thread: Optional[threading.Thread] = None
 recording_stop_event: Optional[threading.Event] = None
-recording_file_path: Optional[str] = None
 recording_start_time: Optional[float] = None
+
+recording_audio_chunks: Optional[list[np.ndarray]] = None
+recording_total_frames: int = 0
+recording_overrun: bool = False
+recording_audio_lock: threading.Lock = threading.Lock()
 
 # Audio level tracking (thread-safe)
 audio_level: float = 0.0
@@ -138,17 +144,35 @@ def _stop_recording_thread():
         audio_level = 0.0
 
 
-def _discard_recording_file():
-    """Delete the temporary recording file if it exists"""
-    global recording_file_path
+def _init_audio_buffer():
+    """Prepare an empty audio buffer for a new recording session."""
+    global recording_audio_chunks, recording_total_frames, recording_overrun
+    with recording_audio_lock:
+        recording_audio_chunks = []
+        recording_total_frames = 0
+        recording_overrun = False
 
-    if recording_file_path and os.path.exists(recording_file_path):
-        try:
-            os.unlink(recording_file_path)
-        except Exception:
-            pass
 
-    recording_file_path = None
+def _consume_audio_buffer():
+    """Return recorded audio chunks and reset the buffer."""
+    global recording_audio_chunks, recording_total_frames, recording_overrun
+    with recording_audio_lock:
+        chunks = recording_audio_chunks
+        total_frames = recording_total_frames
+        overrun = recording_overrun
+        recording_audio_chunks = None
+        recording_total_frames = 0
+        recording_overrun = False
+    return chunks, total_frames, overrun
+
+
+def _clear_audio_buffer():
+    """Discard any recorded audio data."""
+    global recording_audio_chunks, recording_total_frames, recording_overrun
+    with recording_audio_lock:
+        recording_audio_chunks = None
+        recording_total_frames = 0
+        recording_overrun = False
 
 
 def check_cuda_available() -> bool:
@@ -207,36 +231,45 @@ def load_model():
         raise
 
 
-def _record_audio_worker(file_path: str, stop_event: threading.Event, samplerate: int = 16000, channels: int = 1):
-    """Background worker that records from default microphone to a WAV file"""
-    q: "queue.Queue[bytes]" = queue.Queue()
+def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_RATE, channels: int = CHANNELS):
+    """Background worker that records audio into memory buffers"""
+    global audio_level, recording_total_frames, recording_overrun
+
+    max_frames = MAX_RECORDING_FRAMES
+    dropped_chunks = 0
 
     def callback(indata, frames, time_info, status):
-        global audio_level
+        nonlocal dropped_chunks
+        global audio_level, recording_total_frames, recording_overrun
+
         if status:
             logger.warning(f"Recording status: {status}")
-        # Calculate RMS (Root Mean Square) audio level
-        # indata is a numpy array of shape (frames, channels) in range [-1.0, 1.0]
+
         rms = np.sqrt(np.mean(indata**2))
-        # Return raw RMS value - normalization will be done on frontend
         audio_level_value = float(rms)
-        
+
         with audio_level_lock:
             audio_level = audio_level_value
-        
-        q.put(indata.copy())
+
+        chunk = np.array(indata, dtype=np.float32, copy=True)
+        with recording_audio_lock:
+            if recording_audio_chunks is not None:
+                recording_audio_chunks.append(chunk)
+                recording_total_frames += frames
+                if recording_total_frames >= max_frames:
+                    recording_overrun = True
+                    stop_event.set()
+            else:
+                dropped_chunks += 1
 
     try:
-        logger.info(f"Starting audio recording to {file_path}")
-        with sf.SoundFile(file_path, mode="w", samplerate=samplerate, channels=channels) as f:
-            with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback):
-                while not stop_event.is_set():
-                    try:
-                        data = q.get(timeout=0.1)
-                    except queue.Empty:
-                        continue
-                    f.write(data)
+        logger.info("Starting in-memory audio recording")
+        with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback):
+            while not stop_event.is_set():
+                time.sleep(0.05)
         logger.info("Audio recording stopped")
+        if dropped_chunks:
+            logger.warning(f"Dropped {dropped_chunks} audio chunks while recording")
     except Exception as e:
         logger.error(f"Audio recording failed: {e}")
 
@@ -325,19 +358,12 @@ async def transcribe_audio(file: UploadFile = File(...)):
 @app.post("/record/start")
 async def start_recording():
     """Start recording from default microphone"""
-    global recording_thread, recording_stop_event, recording_file_path, recording_start_time, audio_level
+    global recording_thread, recording_stop_event, recording_start_time, audio_level
 
     if recording_thread is not None and recording_thread.is_alive():
         raise HTTPException(status_code=400, detail="Recording already in progress")
 
-    temp_dir = tempfile.gettempdir()
-    recording_file_path = os.path.join(temp_dir, "whisper_recording.wav")
-
-    try:
-        if os.path.exists(recording_file_path):
-            os.unlink(recording_file_path)
-    except Exception:
-        pass
+    _init_audio_buffer()
 
     # Reset audio level
     with audio_level_lock:
@@ -346,7 +372,7 @@ async def start_recording():
     recording_stop_event = threading.Event()
     recording_thread = threading.Thread(
         target=_record_audio_worker,
-        args=(recording_file_path, recording_stop_event),
+        args=(recording_stop_event,),
         daemon=True,
     )
     recording_start_time = time.time()
@@ -370,15 +396,15 @@ async def get_audio_level():
 @app.post("/record/stop")
 async def stop_recording_and_transcribe():
     """Stop recording and transcribe"""
-    global recording_thread, recording_stop_event, recording_file_path, recording_start_time, audio_level
+    global recording_thread, recording_stop_event, recording_start_time, audio_level
 
-    if recording_thread is None or recording_stop_event is None or recording_file_path is None:
+    if recording_thread is None or recording_stop_event is None:
         raise HTTPException(status_code=400, detail="No recording in progress")
 
     _stop_recording_thread()
-
-    if not os.path.exists(recording_file_path):
-        raise HTTPException(status_code=500, detail="Recorded file not found")
+    audio_chunks, total_frames, overrun = _consume_audio_buffer()
+    if not audio_chunks or total_frames == 0:
+        raise HTTPException(status_code=500, detail="No audio data captured")
 
     if model is None:
         raise HTTPException(status_code=503, detail=model_load_error or "Model not loaded")
@@ -387,9 +413,23 @@ async def stop_recording_and_transcribe():
     recording_start_time = None
 
     try:
+        try:
+            audio_data = np.concatenate(audio_chunks, axis=0)
+        except ValueError as concat_error:
+            logger.error(f"Failed to combine audio chunks: {concat_error}")
+            raise HTTPException(status_code=500, detail="Failed to combine audio data")
+
+        if audio_data.ndim == 2 and audio_data.shape[1] == 1:
+            audio_data = audio_data[:, 0]
+
+        audio_data = audio_data.astype(np.float32, copy=False)
+
+        if overrun:
+            logger.warning("Recording hit max duration cap; truncating audio")
+
         logger.info(f"Transcribing recorded audio")
         segments, info = model.transcribe(
-            recording_file_path,
+            audio_data,
             beam_size=5,
             language=None,
             task="transcribe",
@@ -410,21 +450,19 @@ async def stop_recording_and_transcribe():
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-    finally:
-        _discard_recording_file()
 
 
 @app.post("/record/cancel")
 async def cancel_recording():
     """Cancel an in-progress recording without transcribing"""
-    global recording_file_path, recording_start_time
+    global recording_start_time
 
     if recording_thread is None or recording_stop_event is None:
         logger.info("Cancel requested but no active recording")
         return {"status": "no_recording"}
 
     _stop_recording_thread()
-    _discard_recording_file()
+    _clear_audio_buffer()
     recording_start_time = None
 
     logger.info("Recording cancelled and discarded")
