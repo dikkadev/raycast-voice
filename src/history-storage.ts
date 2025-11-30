@@ -61,3 +61,11 @@ export async function getHistoryCount(): Promise<number> {
   return history.length;
 }
 
+/**
+ * Get a specific transcription by ID
+ */
+export async function getTranscriptionById(id: string): Promise<TranscriptionHistoryItem | null> {
+  const history = await getHistory();
+  return history.find((item) => item.id === id) || null;
+}
+

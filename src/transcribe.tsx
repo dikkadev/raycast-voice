@@ -24,7 +24,8 @@ import {
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
 import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory } from "./config";
-import { saveTranscription } from "./history-storage";
+import { saveTranscription, getTranscriptionById } from "./history-storage";
+import { HistoryDetailView, calculatePerformanceRatio } from "./view-history";
 
 enum State {
   IDLE = "idle",
@@ -115,6 +116,7 @@ export default function Command() {
   const [skipAutoAction, setSkipAutoAction] = useState(false);
   const [skipSaveToHistory, setSkipSaveToHistory] = useState(false);
   const [autoActionStatus, setAutoActionStatus] = useState<AutoActionStatus>("idle");
+  const [savedTranscriptionId, setSavedTranscriptionId] = useState<string | null>(null);
   
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
@@ -392,10 +394,12 @@ export default function Command() {
       setProcessingElapsed(0);
 
       // Save to history if enabled and not skipped
+      let transcriptionId: string | null = null;
       if (getSaveToHistory() && !skipSaveToHistory) {
         try {
+          transcriptionId = Date.now().toString();
           await saveTranscription({
-            id: Date.now().toString(),
+            id: transcriptionId,
             text: result.text,
             language: result.language,
             duration: result.duration,
@@ -404,10 +408,13 @@ export default function Command() {
             device: serverInfo?.device || COMPUTE_DEVICE,
             timestamp: Date.now(),
           });
+          setSavedTranscriptionId(transcriptionId);
         } catch (err) {
           // Silently fail - history saving is optional
           console.error("Failed to save to history:", err);
         }
+      } else {
+        setSavedTranscriptionId(null);
       }
 
       await showToast({ style: Toast.Style.Success, title: "Done" });
@@ -457,6 +464,7 @@ export default function Command() {
     setSkipAutoAction(false);
     setSkipSaveToHistory(false);
     setAutoActionStatus("idle");
+    setSavedTranscriptionId(null);
     autoActionExecutedRef.current = false;
   };
 
@@ -627,7 +635,7 @@ export default function Command() {
             {getSaveToHistory() && (
               <Action
                 title={skipSaveToHistory ? "Enable Saving" : "Skip Saving"}
-                icon={skipSaveToHistory ? Icon.Document : Icon.DocumentRemove}
+                icon={skipSaveToHistory ? Icon.Document : Icon.XMarkCircle}
                 onAction={toggleSkipSaveToHistory}
                 shortcut={{ modifiers: ["ctrl"], key: "s" }}
               />
@@ -649,7 +657,7 @@ export default function Command() {
             {getSaveToHistory() && (
               <Action
                 title={skipSaveToHistory ? "Enable Saving" : "Skip Saving"}
-                icon={skipSaveToHistory ? Icon.Document : Icon.DocumentRemove}
+                icon={skipSaveToHistory ? Icon.Document : Icon.XMarkCircle}
                 onAction={toggleSkipSaveToHistory}
                 shortcut={{ modifiers: ["ctrl"], key: "s" }}
               />
@@ -658,10 +666,22 @@ export default function Command() {
         );
 
       case State.DONE:
+        const DetailViewComponent = savedTranscriptionId ? (
+          <TranscriptionDetailViewWrapper transcriptionId={savedTranscriptionId} />
+        ) : null;
+
         return (
           <ActionPanel>
             <Action title="Paste" icon={Icon.Text} onAction={paste} />
             <Action title="Copy" icon={Icon.Clipboard} onAction={copy} shortcut={copyShortcut} />
+            {DetailViewComponent && (
+              <Action.Push
+                title="View Details"
+                icon={Icon.Eye}
+                target={DetailViewComponent}
+                shortcut={{ modifiers: ["ctrl"], key: "d" }}
+              />
+            )}
             <Action.Push
               title="Edit Transcription"
               icon={Icon.Pencil}
@@ -672,9 +692,9 @@ export default function Command() {
               title="View History"
               icon={Icon.Clock}
               onAction={() => launchCommand({ name: "view-history", type: LaunchType.UserInitiated })}
-              shortcut={{ modifiers: ["cmd"], key: "h" }}
+              shortcut={{ modifiers: ["ctrl"], key: "h" }}
             />
-            <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["cmd"], key: "n" }} />
+            <Action title="New Recording" icon={Icon.Microphone} onAction={reset} shortcut={{ modifiers: ["ctrl"], key: "n" }} />
             <Action title="Open Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />
           </ActionPanel>
         );
@@ -723,4 +743,51 @@ function EditTranscriptionForm({ initialText, onSave }: EditTranscriptionFormPro
       <Form.TextArea id="transcription" title="Transcription" defaultValue={initialText} autoFocus />
     </Form>
   );
+}
+
+type TranscriptionDetailViewWrapperProps = {
+  transcriptionId: string;
+};
+
+function TranscriptionDetailViewWrapper({ transcriptionId }: TranscriptionDetailViewWrapperProps) {
+  const [item, setItem] = useState<import("./history-storage").TranscriptionHistoryItem | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadTranscription() {
+      try {
+        const loadedItem = await getTranscriptionById(transcriptionId);
+        if (loadedItem) {
+          setItem(loadedItem);
+        } else {
+          await showToast({
+            style: Toast.Style.Failure,
+            title: "Not found",
+            message: "Could not find this transcription in history",
+          });
+        }
+      } catch (error) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "Failed to load",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadTranscription();
+  }, [transcriptionId]);
+
+  if (isLoading) {
+    return <Detail markdown="Loading..." isLoading={true} />;
+  }
+
+  if (!item) {
+    return <Detail markdown="## Transcription not found\n\nThis transcription could not be found in history." />;
+  }
+
+  const performanceRatio = calculatePerformanceRatio(item.duration, item.transcriptionTime);
+  return <HistoryDetailView item={item} performanceRatio={performanceRatio} />;
 }
