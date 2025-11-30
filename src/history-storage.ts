@@ -3,6 +3,7 @@
  */
 
 import { LocalStorage } from "@raycast/api";
+import { getHistoryLimit } from "./config";
 
 export interface TranscriptionHistoryItem {
   id: string;
@@ -16,25 +17,41 @@ export interface TranscriptionHistoryItem {
 }
 
 const HISTORY_KEY = "transcription-history";
-const DEFAULT_MAX_SIZE = 50;
 
 /**
  * Save a transcription to history
+ * Automatically trims history to the configured limit (keeps newest items)
  */
 export async function saveTranscription(item: TranscriptionHistoryItem): Promise<void> {
   const history = await getHistory();
-  const updated = [item, ...history].slice(0, DEFAULT_MAX_SIZE);
+  const limit = getHistoryLimit();
+  const updated = [item, ...history].slice(0, limit);
   await LocalStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
 }
 
 /**
  * Get transcription history
+ * If limit is provided, returns up to that many items.
+ * Otherwise returns all stored items (may exceed configured limit if limit was recently reduced)
  */
 export async function getHistory(limit?: number): Promise<TranscriptionHistoryItem[]> {
   const stored = await LocalStorage.getItem<string>(HISTORY_KEY);
   if (!stored) return [];
   const history = JSON.parse(stored) as TranscriptionHistoryItem[];
   return limit ? history.slice(0, limit) : history;
+}
+
+/**
+ * Enforce the configured history limit by trimming old items
+ * This is called automatically when saving, but can be called manually if needed
+ */
+export async function enforceHistoryLimit(): Promise<void> {
+  const history = await getHistory();
+  const limit = getHistoryLimit();
+  if (history.length > limit) {
+    const trimmed = history.slice(0, limit);
+    await LocalStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+  }
 }
 
 /**

@@ -18,6 +18,7 @@ export interface TranscribePreferences {
   audioLevelPollingRate?: string;
   autoAction?: string;
   saveToHistory?: boolean;
+  historyLimit?: string;
 }
 
 /**
@@ -71,6 +72,18 @@ export function getAutoAction(): string {
 export function getSaveToHistory(): boolean {
   const cfg = getConfig();
   return cfg.saveToHistory ?? true;
+}
+
+// History limit preference
+export function getHistoryLimit(): number {
+  const cfg = getConfig();
+  const limitStr = cfg.historyLimit || "50";
+  const limit = parseInt(limitStr, 10);
+  if (!Number.isFinite(limit) || limit < 1) {
+    return 50; // Default to 50 if invalid
+  }
+  // Clamp between 1 and 1000
+  return Math.max(1, Math.min(1000, limit));
 }
 
 // Audio level polling rate (in milliseconds, 0 = disabled)

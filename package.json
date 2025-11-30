@@ -101,6 +101,14 @@
           "description": "When enabled, transcriptions are automatically saved to history for quick access later.",
           "default": true,
           "required": false
+        },
+        {
+          "name": "historyLimit",
+          "type": "textfield",
+          "title": "History Limit",
+          "description": "Maximum number of transcriptions to keep in history (1-1000)",
+          "default": "50",
+          "required": false
         }
       ]
     },
