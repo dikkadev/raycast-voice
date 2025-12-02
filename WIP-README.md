@@ -43,6 +43,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Audio level indicator** - Basic implementation (needs UI improvements)
 - [x] **Full UI redesign** - Complete UI overhaul with modern, polished design including improved audio level indicator with smooth animations, better visual hierarchy and spacing, enhanced state transitions and animations, more intuitive layout and information display, and professional, polished appearance
 - [x] **Auto-action display** - Shows configured auto-action (paste/copy) in UI with visual indicator when disabled
+- [x] **User-friendly error messages** - Contextual error handling with specific messages and actionable suggestions for common error scenarios (connection errors, timeouts, server errors, port conflicts, etc.)
 
 ### Actions Available
 - [x] **Copy** - Copies transcription text to clipboard
@@ -54,7 +55,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 - [x] **Enter key to stop** - Primary action triggered on Enter
 - [x] **Edit transcription** - Modify text before copying or pasting
 - [x] **Auto-action after transcription** - Automatically execute paste or copy when transcription completes (configurable, can be skipped during recording/processing with Ctrl+A)
-- [x] **View History** - Access previous transcriptions (Cmd+H shortcut)
+- [x] **View History** - Access previous transcriptions (Ctrl+H shortcut)
 
 ### Backend Features
 - [x] **CUDA support** - GPU acceleration using NVIDIA CUDA
@@ -82,11 +83,7 @@ A Raycast extension that provides **very quickly accessible**, **very high quali
 ## ❌ Not Implemented / TODO
 
 ### Error Handling & Robustness
-- [ ] **Better error messages** - More specific error handling and user-friendly messages
-
-### Keyboard Shortcuts
-- [ ] **Command+H hotkey for history** - Add keyboard shortcut to access history view
-- [ ] **Command+N hotkey for new recording** - Add keyboard shortcut to start new recording
+- [x] **Better error messages** - More specific error handling and user-friendly messages with contextual suggestions
 
 ---
 

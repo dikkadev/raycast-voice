@@ -26,6 +26,7 @@ import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } fro
 import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory } from "./config";
 import { saveTranscription, getTranscriptionById } from "./history-storage";
 import { HistoryDetailView, calculatePerformanceRatio } from "./view-history";
+import { getUserFriendlyError, formatErrorForDisplay, UserFriendlyError } from "./error-handler";
 
 enum State {
   IDLE = "idle",
@@ -101,6 +102,7 @@ export default function Command() {
   const [state, setState] = useState<State>(State.IDLE);
   const [transcription, setTranscription] = useState("");
   const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState<UserFriendlyError | null>(null);
   const [language, setLanguage] = useState("");
   const [duration, setDuration] = useState(0);
   const [serverInfo, setServerInfo] = useState<ServerStatus | null>(null);
@@ -354,11 +356,17 @@ export default function Command() {
       await showToast({ style: Toast.Style.Success, title: "Recording", message: "Speak now..." });
     } catch (err) {
       console.error("Failed to start:", err);
+      const friendlyError = getUserFriendlyError(err, "start");
       setState(State.ERROR);
-      setError(err instanceof Error ? err.message : String(err));
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
       setRecordingStart(null);
       setRecordingElapsed(0);
-      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(err) });
+      await showToast({ 
+        style: Toast.Style.Failure, 
+        title: friendlyError.title, 
+        message: friendlyError.message 
+      });
     }
   };
 
@@ -415,11 +423,17 @@ export default function Command() {
       // The auto-action will be triggered by useEffect when state becomes DONE
     } catch (err) {
       console.error("Transcription failed:", err);
+      const friendlyError = getUserFriendlyError(err, "stop");
       setState(State.ERROR);
-      setError(err instanceof Error ? err.message : String(err));
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
       setTranscriptionStartTime(null);
       setProcessingElapsed(0);
-      await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(err) });
+      await showToast({ 
+        style: Toast.Style.Failure, 
+        title: friendlyError.title, 
+        message: friendlyError.message 
+      });
     }
   };
 
@@ -433,8 +447,15 @@ export default function Command() {
       setState(State.IDLE);
       await showToast({ style: Toast.Style.Success, title: "Server restarted" });
     } catch (err) {
+      const friendlyError = getUserFriendlyError(err, "server");
       setState(State.ERROR);
-      setError(err instanceof Error ? err.message : String(err));
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
+      await showToast({ 
+        style: Toast.Style.Failure, 
+        title: friendlyError.title, 
+        message: friendlyError.message 
+      });
     }
   };
 
@@ -442,6 +463,7 @@ export default function Command() {
     setState(State.IDLE);
     setTranscription("");
     setError("");
+    setErrorDetails(null);
     setLanguage("");
     setDuration(0);
     setRecordingStart(null);
@@ -482,10 +504,15 @@ export default function Command() {
         return;
       }
 
+      const friendlyError = getUserFriendlyError(err, "cancel");
       setState(State.ERROR);
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-      await showToast({ style: Toast.Style.Failure, title: "Cancel failed", message });
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
+      await showToast({ 
+        style: Toast.Style.Failure, 
+        title: friendlyError.title, 
+        message: friendlyError.message 
+      });
     }
   };
 
@@ -587,7 +614,8 @@ export default function Command() {
         return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
 
       case State.ERROR:
-        return `## ❌ Error\n\n${error}\n\n─────────────────────\n\nCheck server and try again.`;
+        // error already contains formatted markdown with title, message, and suggestion
+        return error || "## ❌ Error\n\nAn unknown error occurred.";
 
       default:
         return "";
