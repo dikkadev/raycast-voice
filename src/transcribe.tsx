@@ -23,6 +23,7 @@ import {
   CancelEndpointUnavailableError,
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
+import { processTranscription } from "./post-processing";
 import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory } from "./config";
 import { saveTranscription, getTranscriptionById } from "./history-storage";
 import { HistoryDetailView, calculatePerformanceRatio } from "./view-history";
@@ -385,7 +386,10 @@ export default function Command() {
       const processingEnd = Date.now();
       const transcriptionTime = (processingEnd - processingStart) / 1000;
 
-      setTranscription(result.text);
+      const rawText = result.text;
+      const processedText = processTranscription(rawText);
+
+      setTranscription(processedText);
       setLanguage(result.language);
       setDuration(result.duration);
       setTranscriptionDuration(transcriptionTime);
@@ -400,13 +404,14 @@ export default function Command() {
           transcriptionId = Date.now().toString();
           await saveTranscription({
             id: transcriptionId,
-            text: result.text,
+            text: processedText,
+            originalText: rawText,
             language: result.language,
             duration: result.duration,
+            timestamp: Date.now(),
             transcriptionTime: transcriptionTime,
             model: WHISPER_MODEL,
             device: serverInfo?.device || COMPUTE_DEVICE,
-            timestamp: Date.now(),
           });
           setSavedTranscriptionId(transcriptionId);
         } catch (err) {

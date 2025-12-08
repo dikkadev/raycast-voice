@@ -101,6 +101,42 @@
           "description": "When enabled, transcriptions are automatically saved to history for quick access later.",
           "default": true,
           "required": false
+        },
+        {
+          "name": "collapseWhitespace",
+          "type": "checkbox",
+          "title": "Post-Processing Rules",
+          "label": "Collapse whitespace",
+          "description": "Reduces multiple spaces to a single space (e.g., '  ' → ' ')",
+          "default": true,
+          "required": false
+        },
+        {
+          "name": "punctuationSpacing",
+          "type": "checkbox",
+          "title": "",
+          "label": "Fix punctuation spacing",
+          "description": "Ensures a space after commas, periods, etc. (e.g., 'Hi,there' → 'Hi, there')",
+          "default": true,
+          "required": false
+        },
+        {
+          "name": "capitalizeFirst",
+          "type": "checkbox",
+          "title": "",
+          "label": "Capitalize first letter",
+          "description": "Always capitalizes the start of the text (e.g., 'hello' → 'Hello')",
+          "default": false,
+          "required": false
+        },
+        {
+          "name": "collapseRepeatedWords",
+          "type": "checkbox",
+          "title": "",
+          "label": "Collapse repeated words",
+          "description": "Merges adjacent identical words (e.g., 'is is' → 'is')",
+          "default": false,
+          "required": false
         }
       ]
     },

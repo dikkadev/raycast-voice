@@ -13,6 +13,7 @@ export interface TranscriptionHistoryItem {
   model: string;
   device: string;
   timestamp: number;
+  originalText?: string;
 }
 
 const HISTORY_KEY = "transcription-history";

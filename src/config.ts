@@ -18,6 +18,10 @@ export interface TranscribePreferences {
   audioLevelPollingRate?: string;
   autoAction?: string;
   saveToHistory?: boolean;
+  collapseWhitespace?: boolean;
+  punctuationSpacing?: boolean;
+  capitalizeFirst?: boolean;
+  collapseRepeatedWords?: boolean;
 }
 
 /**
@@ -34,6 +38,10 @@ export function getConfig(): TranscribePreferences {
     returnToRoot: prefs.returnToRoot ?? false,
     audioLevelPollingRate: prefs.audioLevelPollingRate || "150",
     autoAction: prefs.autoAction || "none",
+    collapseWhitespace: prefs.collapseWhitespace ?? true,
+    punctuationSpacing: prefs.punctuationSpacing ?? true,
+    capitalizeFirst: prefs.capitalizeFirst ?? false,
+    collapseRepeatedWords: prefs.collapseRepeatedWords ?? false,
   };
 }
 
@@ -71,6 +79,28 @@ export function getAutoAction(): string {
 export function getSaveToHistory(): boolean {
   const cfg = getConfig();
   return cfg.saveToHistory ?? true;
+}
+
+// Post-processing rules
+
+export function isCollapseWhitespaceEnabled(): boolean {
+  const cfg = getConfig();
+  return cfg.collapseWhitespace ?? true;
+}
+
+export function isPunctuationSpacingEnabled(): boolean {
+  const cfg = getConfig();
+  return cfg.punctuationSpacing ?? true;
+}
+
+export function isCapitalizeFirstEnabled(): boolean {
+  const cfg = getConfig();
+  return cfg.capitalizeFirst ?? false;
+}
+
+export function isCollapseRepeatedWordsEnabled(): boolean {
+  const cfg = getConfig();
+  return cfg.collapseRepeatedWords ?? false;
 }
 
 // Audio level polling rate (in milliseconds, 0 = disabled)
