@@ -138,9 +138,13 @@ class VoiceGUI:
         self.progress_bar.set(0.0)
         self.progress_bar.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 20))
         
-        # Clipboard Status Label (New)
+        # Stats Label
+        self.lbl_stats = ctk.CTkLabel(self.action_frame, text="", text_color="#aaaaaa", font=("Arial", 11))
+        self.lbl_stats.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 5))
+
+        # Clipboard Status Label
         self.lbl_clipboard = ctk.CTkLabel(self.action_frame, text="", text_color="#aaaaaa", font=("Arial", 11))
-        self.lbl_clipboard.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 10))
+        self.lbl_clipboard.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 10))
         
         # --- Bottom Section: Output ---
         # Direct textbox looks better if filling space
@@ -164,6 +168,7 @@ class VoiceGUI:
 
     def start_recording(self) -> None:
         self.lbl_clipboard.configure(text="") # Clear old status
+        self.lbl_stats.configure(text="")     # Clear old stats
         self._set_status_ui(recording=True, msg="Starting...")
         self.btn_record.configure(state="disabled", text="Starting...")
         threading.Thread(target=self._start_request, daemon=True).start()
@@ -212,14 +217,19 @@ class VoiceGUI:
         if self.poll_thread and self.poll_thread.is_alive():
             self.poll_thread.join(timeout=1.0)
 
+        start_time = time.time()
         try:
             resp = self.session.post(f"{self.base_url}/record/stop", timeout=60)
             resp.raise_for_status()
             data = resp.json()
             text = data.get("text", "") or ""
+            language = data.get("language", "?")
+            duration = data.get("duration", 0.0)
         except Exception as exc:
             self.root.after(0, lambda: self._show_error(f"Stop failed: {exc}"))
             return
+        
+        proc_time = time.time() - start_time
 
         copied = False
         try:
@@ -227,15 +237,18 @@ class VoiceGUI:
             copied = True
         except Exception:
             pass
-        self.root.after(0, lambda: self._on_stop_success(text, copied))
+        self.root.after(0, lambda: self._on_stop_success(text, copied, language, duration, proc_time))
 
-    def _on_stop_success(self, text: str, copied: bool) -> None:
+    def _on_stop_success(self, text: str, copied: bool, language: str, duration: float, proc_time: float) -> None:
         self.recording = False
         self._set_status_ui(recording=False, msg="Done")
         self._update_level_bar(0.0)
         self._set_record_btn_style(recording=False)
         self._set_transcription_text(text)
         
+        stats_text = f"Lang: {language} | Audio: {duration:.1f}s | Proc: {proc_time:.1f}s"
+        self.lbl_stats.configure(text=stats_text)
+
         if copied:
              self.lbl_clipboard.configure(text="Result copied to clipboard!", text_color="#4caf50")
         else:
