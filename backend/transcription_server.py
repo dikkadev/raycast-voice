@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 import tempfile
+import gc
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,7 +102,7 @@ app.add_middleware(
 )
 
 # Build identifier used by the Raycast extension to ensure backend/frontend compatibility
-SERVER_BUILD_ID = "2025-11-29-cancel-endpoint"
+SERVER_BUILD_ID = "2025-12-08-memory-opt"
 
 # Global model and recording state
 model: Optional[WhisperModel] = None
@@ -177,12 +178,9 @@ def _clear_audio_buffer():
 
 def check_cuda_available() -> bool:
     """Check if CUDA is available"""
-    try:
-        import torch
-        return torch.cuda.is_available()
-    except ImportError:
-        # If torch isn't available, try loading model and see what happens
-        return True  # Optimistic - faster-whisper will handle it
+    # Simply return True effectively letting faster-whisper handle the check during load
+    # This avoids importing the massive torch library just for a boolean check
+    return True
 
 
 def load_model():
@@ -229,6 +227,8 @@ def load_model():
         model_load_error = str(e)
         logger.error(f"Failed to load model: {e}")
         raise
+    finally:
+        gc.collect()
 
 
 def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_RATE, channels: int = CHANNELS):
@@ -353,6 +353,9 @@ async def transcribe_audio(file: UploadFile = File(...)):
                 os.unlink(temp_path)
             except Exception:
                 pass
+        
+        # Free up memory explicitly after large transcription
+        gc.collect()
 
 
 @app.post("/record/start")
@@ -450,6 +453,8 @@ async def stop_recording_and_transcribe():
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    finally:
+        gc.collect()
 
 
 @app.post("/record/cancel")
