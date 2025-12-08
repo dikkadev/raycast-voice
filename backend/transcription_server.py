@@ -65,6 +65,7 @@ def parse_args():
     parser.add_argument("--model", default="base", help="Whisper model size")
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"], help="Compute device")
     parser.add_argument("--compute-type", default=None, help="Compute type (auto-detected if not set)")
+    parser.add_argument("--no-warmup", action="store_true", help="Disable model warm-up on startup")
     return parser.parse_args()
 
 # Server configuration (will be set from command line args)
@@ -74,6 +75,7 @@ class ServerConfig:
     model_size: str = "base"
     device: str = "cuda"
     compute_type: str = "float16"
+    warmup: bool = True
     
     @classmethod
     def from_args(cls, args):
@@ -86,6 +88,7 @@ class ServerConfig:
             cls.compute_type = args.compute_type
         else:
             cls.compute_type = "float16" if args.device == "cuda" else "int8"
+        cls.warmup = not args.no_warmup
         return cls
 
 config = ServerConfig()
@@ -219,7 +222,6 @@ def load_model():
             compute_type=compute_type,
             download_root=None,
         )
-        # Update config to reflect actual device used
         config.device = "cpu"
         config.compute_type = compute_type
         logger.info("Model loaded successfully on CPU")
@@ -229,6 +231,42 @@ def load_model():
         raise
     finally:
         gc.collect()
+
+    # Perform warm-up if enabled
+    if config.warmup:
+        warmup_model()
+
+
+def warmup_model():
+    """
+    Perform a dummy inference to warm up CUDA kernels, FFT plans, and memory buffers.
+    This eliminates the ~1s overhead on the first real transcription.
+    """
+    global model
+    if model is None:
+        return
+
+    try:
+        logger.info("Warming up Whisper model...")
+        
+        # 1. Warm up tokenizer
+        # Just encoding/decoding a simple token
+        # (Accessing tokenizer directly if possible, or just relying on transcribe)
+        
+        # 2. Warm up inference engine with dummy audio
+        # Create 1 second of silence at 16k sample rate
+        dummy_audio = np.zeros(16000, dtype=np.float32)
+        
+        # Run a small transcription
+        model.transcribe(
+            dummy_audio,
+            beam_size=1, # Fast mode for warmup
+            language="en",
+        )
+        
+        logger.info("Warm-up completed successfully")
+    except Exception as e:
+        logger.warning(f"Warm-up failed (non-fatal): {e}")
 
 
 def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_RATE, channels: int = CHANNELS):
@@ -384,6 +422,18 @@ async def start_recording():
     )
     recording_start_time = time.time()
     recording_thread.start()
+
+    # OPTIMIZATION: Trigger a background warm-up while the user is recording
+    # This ensures GPU/CUDA context is hot effectively "hiding" the overhead
+    def _async_warmup():
+        if not config.warmup:
+            return
+        try:
+            warmup_model()
+        except Exception:
+            pass
+            
+    threading.Thread(target=_async_warmup, daemon=True).start()
 
     logger.info("Recording started")
     return {"status": "recording_started"}
