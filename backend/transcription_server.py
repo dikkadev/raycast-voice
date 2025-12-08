@@ -102,7 +102,7 @@ app.add_middleware(
 )
 
 # Build identifier used by the Raycast extension to ensure backend/frontend compatibility
-SERVER_BUILD_ID = "2025-12-08-memory-opt"
+SERVER_BUILD_ID = "2025-12-08-cpu-opt"
 
 # Global model and recording state
 model: Optional[WhisperModel] = None
@@ -245,11 +245,13 @@ def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_R
         if status:
             logger.warning(f"Recording status: {status}")
 
-        rms = np.sqrt(np.mean(indata**2))
-        audio_level_value = float(rms)
-
+        # Optimization: Simplified RMS or mean absolute for visualization
+        # We don't need perfect RMS for a simple visualizer
+        level = float(np.mean(np.abs(indata)))
+        
         with audio_level_lock:
-            audio_level = audio_level_value
+            # Simple decay smoothing could be done here if needed, but the GUI handles it
+            audio_level = level
 
         chunk = np.array(indata, dtype=np.float32, copy=True)
         with recording_audio_lock:
@@ -264,7 +266,9 @@ def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_R
 
     try:
         logger.info("Starting in-memory audio recording")
-        with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback):
+        # Optimization: Set explicit blocksize to reduce callback frequency
+        # default is often ~26ms (40Hz), 2048 samples is ~128ms (8Hz) at 16k
+        with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback, blocksize=2048):
             while not stop_event.is_set():
                 time.sleep(0.05)
         logger.info("Audio recording stopped")
