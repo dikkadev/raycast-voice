@@ -44,7 +44,7 @@ const config = getConfig();
 export const BACKEND_DIR = config.backendDirectory;
 
 // Backend/server build identifier (must stay in sync with Python backend)
-export const SERVER_BUILD_ID = "2025-11-29-cancel-endpoint";
+export const SERVER_BUILD_ID = "2025-12-08-cpu-opt";
 
 // Server configuration
 export const SERVER_HOST = "127.0.0.1";
