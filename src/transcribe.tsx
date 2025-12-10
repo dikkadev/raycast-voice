@@ -21,6 +21,7 @@ import {
   getAudioLevel,
   cancelBackendRecording,
   CancelEndpointUnavailableError,
+  StartRecordingResponse,
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
 import { processTranscription } from "./post-processing";
@@ -28,6 +29,7 @@ import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLeve
 import { saveTranscription, getTranscriptionById } from "./history-storage";
 import { HistoryDetailView, calculatePerformanceRatio } from "./view-history";
 import { getUserFriendlyError, formatErrorForDisplay, UserFriendlyError } from "./error-handler";
+import { getPreferredInputDevice, formatSelectionLabel, SYSTEM_DEFAULT_LABEL } from "./input-device";
 
 enum State {
   IDLE = "idle",
@@ -118,6 +120,7 @@ export default function Command() {
   const [skipSaveToHistory, setSkipSaveToHistory] = useState(false);
   const [autoActionStatus, setAutoActionStatus] = useState<AutoActionStatus>("idle");
   const [savedTranscriptionId, setSavedTranscriptionId] = useState<string | null>(null);
+  const [inputDeviceLabel, setInputDeviceLabel] = useState<string>(SYSTEM_DEFAULT_LABEL);
   
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
@@ -352,7 +355,24 @@ export default function Command() {
       setState(State.RECORDING);
       setRecordingStart(Date.now());
       setRecordingElapsed(0);
-      await startBackendRecording();
+
+      const preferredDevice = await getPreferredInputDevice();
+      const startResponse: StartRecordingResponse = await startBackendRecording(
+        preferredDevice
+          ? {
+              deviceId: preferredDevice.deviceId ?? null,
+              deviceName: preferredDevice.deviceName ?? null,
+            }
+          : undefined
+      );
+
+      const effectiveLabel = startResponse?.device?.name || formatSelectionLabel(preferredDevice);
+      setInputDeviceLabel(effectiveLabel);
+
+      if (startResponse?.device?.fallback_used) {
+        const reason = startResponse.device.fallback_reason || "Requested input was unavailable; using system default.";
+        await showToast({ style: Toast.Style.Warning, title: "Input fallback in use", message: reason });
+      }
 
       await showToast({ style: Toast.Style.Success, title: "Recording", message: "Speak now..." });
     } catch (err) {
@@ -555,21 +575,22 @@ export default function Command() {
     const model = WHISPER_MODEL;
     const device = serverInfo?.device || COMPUTE_DEVICE;
     const deviceEmoji = device.toLowerCase() === "cuda" ? "🖥️" : "💻";
+    const inputLabel = inputDeviceLabel || SYSTEM_DEFAULT_LABEL;
 
     switch (state) {
       case State.CHECKING:
         const checkingAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
-        return `## 🔍 Checking server${getAnimatedDots(animationTick)}\n\n${deviceEmoji} \`${model}\` · \`${device}\`${checkingAutoAction}`;
+        return `## 🔍 Checking server${getAnimatedDots(animationTick)}\n\n${deviceEmoji} \`${model}\` · \`${device}\` · 🎙️ ${inputLabel}${checkingAutoAction}`;
 
       case State.STARTING:
         const startingClockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
         const startingClockEmoji = startingClockEmojis[animationTick % startingClockEmojis.length];
         const startingAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
-        return `## ${startingClockEmoji} Loading Whisper model${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\`${startingAutoAction}`;
+        return `## ${startingClockEmoji} Loading Whisper model${getAnimatedDots(animationTick)}\n\nThis may take a moment on first run.\n\n${deviceEmoji} \`${model}\` · \`${device}\` · 🎙️ ${inputLabel}${startingAutoAction}`;
 
       case State.IDLE:
         const idleAutoAction = autoAction !== "none" ? ` · 🔄 ${autoAction === "paste" ? "Auto-paste" : "Auto-copy"}` : "";
-        return `## 🎙️ Ready\n\nPress **Enter** to start recording.\n\n─────────────────────\n\n${deviceEmoji} \`${model}\` · \`${device}\`${idleAutoAction}`;
+        return `## 🎙️ Ready\n\nPress **Enter** to start recording.\n\n─────────────────────\n\n${deviceEmoji} \`${model}\` · \`${device}\` · 🎙️ ${inputLabel}${idleAutoAction}`;
 
       case State.RECORDING:
         const waveform = renderWaveform(audioLevelHistory);
@@ -582,7 +603,7 @@ export default function Command() {
           ? ` · 🔄 ${skipAutoAction ? `~~\`${autoActionText}\`~~` : `\`${autoActionText}\``}`
           : "";
         
-        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}${recordingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
+        return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}${recordingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\` · 🎙️ ${inputLabel}${recordingAutoAction}`;
 
       case State.PROCESSING:
         const clockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
@@ -595,7 +616,7 @@ export default function Command() {
         const processingAutoAction = autoAction !== "none" 
           ? ` · 🔄 ${skipAutoAction ? `~~\`${processingAutoActionText}\`~~` : `\`${processingAutoActionText}\``}`
           : "";
-        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}${processingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
+        return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}${processingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\` · 🎙️ ${inputLabel}${processingAutoAction}`;
 
       case State.DONE:
         if (autoActionActive && autoActionStatus !== "failure") {
@@ -616,7 +637,7 @@ export default function Command() {
         const doneAutoAction = autoActionEnabled
           ? ` · 🔄 ${skipAutoAction ? `~~\`${doneAutoActionText}\`~~` : `\`${doneAutoActionText}\``}`
           : "";
-        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
+        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\` · 🎙️ ${inputLabel}${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
 
       case State.ERROR:
         // error already contains formatted markdown with title, message, and suggestion
@@ -636,6 +657,11 @@ export default function Command() {
         return (
           <ActionPanel>
             <Action title="Start Recording" icon={Icon.Microphone} onAction={startRecording} />
+            <Action
+              title="Select Transcription Input Device"
+              icon={Icon.Microphone}
+              onAction={() => launchCommand({ name: "select-input-device", type: LaunchType.UserInitiated })}
+            />
             {configMismatch ? (
               <Action title="Restart Server (Config Changed)" icon={Icon.ArrowClockwise} onAction={handleRestart} />
             ) : (
@@ -715,6 +741,11 @@ export default function Command() {
               icon={Icon.Pencil}
               shortcut={{ modifiers: ["ctrl"], key: "e" }}
               target={<EditTranscriptionForm initialText={transcription} onSave={setTranscription} />}
+            />
+            <Action
+              title="Select Transcription Input Device"
+              icon={Icon.Microphone}
+              onAction={() => launchCommand({ name: "select-input-device", type: LaunchType.UserInitiated })}
             />
             <Action
               title="View History"

@@ -8,13 +8,14 @@ import os
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Tuple, Any
 import tempfile
 import gc
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 # On Windows, we must explicitly add the NVIDIA libraries to the DLL search path
 if os.name == 'nt':
@@ -126,10 +127,136 @@ recording_audio_lock: threading.Lock = threading.Lock()
 audio_level: float = 0.0
 audio_level_lock: threading.Lock = threading.Lock()
 
+# Last input device info used for recording
+last_input_device: Optional[Dict[str, Any]] = None
+
+# Track the device id currently in use by the input stream (None = system default)
+current_input_device: Optional[int] = None
+
+
+class DeviceSelection(BaseModel):
+    device_id: Optional[int] = None
+    device_name: Optional[str] = None
+
+
+def list_input_devices() -> List[Dict[str, Any]]:
+    """Return a list of available input devices with metadata."""
+    devices = []
+    try:
+        hostapis = sd.query_hostapis()
+        for idx, dev in enumerate(sd.query_devices()):
+            if dev.get("max_input_channels", 0) <= 0:
+                continue
+            hostapi_index = dev.get("hostapi", -1)
+            hostapi_name = hostapis[hostapi_index]["name"] if 0 <= hostapi_index < len(hostapis) else "Unknown"
+            devices.append(
+                {
+                    "id": idx,
+                    "name": dev.get("name", f"Device {idx}"),
+                    "hostapi": hostapi_name,
+                    "max_input_channels": dev.get("max_input_channels"),
+                    "default_samplerate": dev.get("default_samplerate"),
+                    "is_default_input": sd.default.device is not None and sd.default.device[0] == idx,
+                }
+            )
+    except Exception as e:
+        logger.error(f"Failed to enumerate audio devices: {e}")
+    return devices
+
+
+def _validate_device(device_id: Optional[int]) -> Tuple[bool, Optional[str]]:
+    """Validate a device for the configured sample rate/channels."""
+    try:
+        sd.check_input_settings(device=device_id, samplerate=SAMPLE_RATE, channels=CHANNELS)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def _select_input_device(requested_id: Optional[int], requested_name: Optional[str]) -> Tuple[Optional[int], Dict[str, Any]]:
+    """
+    Choose the best input device.
+    Returns (device_id or None for default, info dict).
+    Never raises for missing/invalid requested device; will fall back to default/first available.
+    """
+    devices = list_input_devices()
+    if not devices:
+        raise HTTPException(status_code=400, detail="No input devices with capture capability were found")
+
+    default_id = sd.default.device[0] if sd.default.device else None
+    fallback_reason: Optional[str] = None
+
+    def find_by_id(dev_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        if dev_id is None:
+            return None
+        return next((d for d in devices if d["id"] == dev_id), None)
+
+    def find_by_name(name: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not name:
+            return None
+        lowered = name.lower()
+        return next((d for d in devices if d["name"].lower() == lowered), None)
+
+    candidates: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+
+    requested_device = find_by_id(requested_id)
+    if requested_id is not None and not requested_device:
+        fallback_reason = f"Requested device id {requested_id} was not found"
+    if requested_device:
+        candidates.append(("requested_id", requested_device))
+
+    requested_by_name = find_by_name(requested_name)
+    if requested_name and not requested_by_name and not fallback_reason:
+        fallback_reason = f"Requested device '{requested_name}' was not found"
+    if requested_by_name and requested_by_name not in [c[1] for c in candidates]:
+        candidates.append(("requested_name", requested_by_name))
+
+    default_device = find_by_id(default_id)
+    if default_device:
+        candidates.append(("default", default_device))
+
+    # Last resort: first available device
+    candidates.append(("first_available", devices[0]))
+
+    validation_failures: List[str] = []
+
+    for source, dev in candidates:
+        if not dev:
+            continue
+        ok, err = _validate_device(dev["id"])
+        if ok:
+            selected = {
+                "id": dev["id"],
+                "name": dev["name"],
+                "hostapi": dev["hostapi"],
+                "max_input_channels": dev["max_input_channels"],
+                "default_samplerate": dev["default_samplerate"],
+                "is_default_input": dev["is_default_input"],
+                "source": source,
+                "fallback_used": source not in ("requested_id", "requested_name"),
+                "fallback_reason": fallback_reason or (None if source.startswith("requested") else None),
+                "requested": {
+                    "id": requested_id,
+                    "name": requested_name,
+                },
+            }
+            return dev["id"], selected
+        else:
+            validation_failures.append(f"{dev['name']}: {err}")
+            # If this was the requested device, remember the reason
+            if source.startswith("requested") and not fallback_reason:
+                fallback_reason = f"Requested device not usable: {err}"
+
+    combined_reason = "; ".join(validation_failures) or "No usable input devices"
+    raise HTTPException(
+        status_code=500,
+        detail=f"No usable input device found at {SAMPLE_RATE}Hz mono. Tried: {combined_reason}",
+    )
+
 
 def _stop_recording_thread():
     """Helper to stop the background recording thread safely"""
-    global recording_thread, recording_stop_event, audio_level
+    global recording_thread, recording_stop_event, audio_level, current_input_device
 
     if recording_stop_event:
         recording_stop_event.set()
@@ -139,6 +266,7 @@ def _stop_recording_thread():
 
     recording_thread = None
     recording_stop_event = None
+    current_input_device = None
 
     with audio_level_lock:
         # Reset cached audio level so frontend meters clear immediately
@@ -231,7 +359,12 @@ def load_model():
         gc.collect()
 
 
-def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_RATE, channels: int = CHANNELS):
+def _record_audio_worker(
+    stop_event: threading.Event,
+    samplerate: int = SAMPLE_RATE,
+    channels: int = CHANNELS,
+    device: Optional[int] = None,
+):
     """Background worker that records audio into memory buffers"""
     global audio_level, recording_total_frames, recording_overrun
 
@@ -268,7 +401,13 @@ def _record_audio_worker(stop_event: threading.Event, samplerate: int = SAMPLE_R
         logger.info("Starting in-memory audio recording")
         # Optimization: Set explicit blocksize to reduce callback frequency
         # default is often ~26ms (40Hz), 2048 samples is ~128ms (8Hz) at 16k
-        with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback, blocksize=2048):
+        with sd.InputStream(
+            samplerate=samplerate,
+            channels=channels,
+            callback=callback,
+            blocksize=2048,
+            device=device,
+        ):
             while not stop_event.is_set():
                 time.sleep(0.05)
         logger.info("Audio recording stopped")
@@ -298,6 +437,7 @@ async def health_check():
         "model_error": model_load_error,
         "recording": recording_thread is not None and recording_thread.is_alive(),
         "build_id": SERVER_BUILD_ID,
+        "input_device": last_input_device,
     }
 
 
@@ -310,7 +450,15 @@ async def get_config():
         "compute_type": config.compute_type,
         "host": config.host,
         "port": config.port,
+        "input_device": last_input_device,
     }
+
+
+@app.get("/audio/devices")
+async def get_audio_devices():
+    """List available input devices"""
+    devices = list_input_devices()
+    return {"devices": devices}
 
 
 @app.post("/transcribe")
@@ -363,12 +511,17 @@ async def transcribe_audio(file: UploadFile = File(...)):
 
 
 @app.post("/record/start")
-async def start_recording():
-    """Start recording from default microphone"""
-    global recording_thread, recording_stop_event, recording_start_time, audio_level
+async def start_recording(selection: DeviceSelection = DeviceSelection()):
+    """Start recording from a chosen (or default) microphone"""
+    global recording_thread, recording_stop_event, recording_start_time, audio_level, last_input_device, current_input_device
 
     if recording_thread is not None and recording_thread.is_alive():
         raise HTTPException(status_code=400, detail="Recording already in progress")
+
+    # Choose device with graceful fallback
+    device_id, device_info = _select_input_device(selection.device_id, selection.device_name)
+    current_input_device = device_id
+    last_input_device = device_info
 
     _init_audio_buffer()
 
@@ -379,14 +532,16 @@ async def start_recording():
     recording_stop_event = threading.Event()
     recording_thread = threading.Thread(
         target=_record_audio_worker,
-        args=(recording_stop_event,),
+        args=(recording_stop_event, SAMPLE_RATE, CHANNELS, current_input_device),
         daemon=True,
     )
     recording_start_time = time.time()
     recording_thread.start()
 
-    logger.info("Recording started")
-    return {"status": "recording_started"}
+    logger.info(
+        f"Recording started on input device '{device_info.get('name')}' (id={device_info.get('id')}, source={device_info.get('source')})"
+    )
+    return {"status": "recording_started", "device": device_info}
 
 
 @app.get("/record/level")
@@ -501,6 +656,7 @@ async def root():
         "endpoints": [
             "GET  /health - Server health and status",
             "GET  /config - Current configuration",
+            "GET  /audio/devices - List input devices",
             "POST /transcribe - Transcribe uploaded audio",
             "POST /record/start - Start recording",
             "GET  /record/level - Get current audio level (0.0-1.0)",

@@ -350,13 +350,13 @@ export async function restartServer(): Promise<void> {
       } else {
         throw new Error(
           `Failed to stop the existing Whisper server (PID ${pid}).\n\n` +
-            `Please close that Python process manually or change the server port in preferences, then try again.`
+          `Please close that Python process manually or change the server port in preferences, then try again.`
         );
       }
     } else {
       throw new Error(
         `An existing Whisper server is still running with model=${statusAfterStop.model} (${statusAfterStop.device}).\n\n` +
-          `Please close that Python process manually or change the server port in preferences, then try again.`
+        `Please close that Python process manually or change the server port in preferences, then try again.`
       );
     }
   }

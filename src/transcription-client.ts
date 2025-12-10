@@ -31,13 +31,43 @@ export class CancelEndpointUnavailableError extends Error {
 /**
  * Start backend microphone recording
  */
-export async function startBackendRecording(): Promise<void> {
+export interface StartRecordingOptions {
+  deviceId?: number | null;
+  deviceName?: string | null;
+}
+
+export interface StartRecordingResponse {
+  status: string;
+  device?: {
+    id: number | null;
+    name: string;
+    hostapi?: string;
+    source?: string;
+    fallback_used?: boolean;
+    fallback_reason?: string | null;
+    requested?: {
+      id: number | null;
+      name: string | null;
+    };
+  };
+}
+
+export async function startBackendRecording(options?: StartRecordingOptions): Promise<StartRecordingResponse> {
   const url = `${SERVER_URL}/record/start`;
   try {
-    const response = await axios.post(url, null, { timeout: 5000 });
+    const payload =
+      options && (options.deviceId !== undefined || options.deviceName !== undefined)
+        ? {
+            device_id: options.deviceId ?? null,
+            device_name: options.deviceName ?? null,
+          }
+        : null;
+
+    const response = await axios.post(url, payload, { timeout: 5000 });
     if (response.status !== 200) {
       throw new Error(`Unexpected status code: ${response.status}`);
     }
+    return response.data as StartRecordingResponse;
   } catch (error) {
     console.error("Failed to start backend recording:", error);
     if (axios.isAxiosError(error)) {

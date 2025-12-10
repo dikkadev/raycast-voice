@@ -145,6 +145,12 @@
       "title": "View Transcription History",
       "description": "View and manage your transcription history",
       "mode": "view"
+    },
+    {
+      "name": "select-input-device",
+      "title": "Select Transcription Input Device",
+      "description": "Choose which microphone to use for transcription",
+      "mode": "view"
     }
   ],
   "dependencies": {
