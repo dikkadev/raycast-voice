@@ -21,6 +21,8 @@ import {
   getAudioLevel,
   cancelBackendRecording,
   CancelEndpointUnavailableError,
+  retranscribeLastRecording,
+  clearCachedRecording,
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
 import { processTranscription } from "./post-processing";
@@ -118,6 +120,7 @@ export default function Command() {
   const [skipSaveToHistory, setSkipSaveToHistory] = useState(false);
   const [autoActionStatus, setAutoActionStatus] = useState<AutoActionStatus>("idle");
   const [savedTranscriptionId, setSavedTranscriptionId] = useState<string | null>(null);
+  const [hasCachedRecording, setHasCachedRecording] = useState(false);
   
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
@@ -314,6 +317,8 @@ export default function Command() {
             activeStateRef.current = State.IDLE;
           });
       }
+      // Best-effort clear of cached audio when leaving the command
+      clearCachedRecording().catch((err) => console.error("Failed to clear cached recording on unmount:", err));
     };
   }, []);
 
@@ -332,6 +337,7 @@ export default function Command() {
   const startRecording = async () => {
     try {
       setState(State.STARTING);
+      setHasCachedRecording(false);
       await ensureServerRunning();
 
       const status = await getServerStatus();
@@ -396,6 +402,7 @@ export default function Command() {
       setState(State.DONE);
       setTranscriptionStartTime(null);
       setProcessingElapsed(0);
+      setHasCachedRecording(true);
 
       // Save to history if enabled and not skipped
       let transcriptionId: string | null = null;
@@ -428,6 +435,71 @@ export default function Command() {
       // The auto-action will be triggered by useEffect when state becomes DONE
     } catch (err) {
       console.error("Transcription failed:", err);
+      const friendlyError = getUserFriendlyError(err, "stop");
+      setState(State.ERROR);
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
+      setTranscriptionStartTime(null);
+      setProcessingElapsed(0);
+      await showToast({ 
+        style: Toast.Style.Failure, 
+        title: friendlyError.title, 
+        message: friendlyError.message 
+      });
+    }
+  };
+
+  const rerunTranscription = async () => {
+    try {
+      const processingStart = Date.now();
+      setState(State.PROCESSING);
+      setTranscriptionStartTime(processingStart);
+      setProcessingElapsed(0);
+      await showToast({ style: Toast.Style.Animated, title: "Re-running transcription..." });
+
+      const result = await retranscribeLastRecording();
+
+      const processingEnd = Date.now();
+      const transcriptionTime = (processingEnd - processingStart) / 1000;
+
+      const rawText = result.text;
+      const processedText = processTranscription(rawText);
+
+      setTranscription(processedText);
+      setLanguage(result.language);
+      setDuration(result.duration);
+      setTranscriptionDuration(transcriptionTime);
+      setState(State.DONE);
+      setTranscriptionStartTime(null);
+      setProcessingElapsed(0);
+      setHasCachedRecording(true); // still valid and timer reset backend-side
+
+      let transcriptionId: string | null = null;
+      if (getSaveToHistory() && !skipSaveToHistory) {
+        try {
+          transcriptionId = Date.now().toString();
+          await saveTranscription({
+            id: transcriptionId,
+            text: processedText,
+            originalText: rawText,
+            language: result.language,
+            duration: result.duration,
+            timestamp: Date.now(),
+            transcriptionTime: transcriptionTime,
+            model: WHISPER_MODEL,
+            device: serverInfo?.device || COMPUTE_DEVICE,
+          });
+          setSavedTranscriptionId(transcriptionId);
+        } catch (err) {
+          console.error("Failed to save retranscription to history:", err);
+        }
+      } else {
+        setSavedTranscriptionId(null);
+      }
+
+      await showToast({ style: Toast.Style.Success, title: "Re-run complete" });
+    } catch (err) {
+      console.error("Retranscription failed:", err);
       const friendlyError = getUserFriendlyError(err, "stop");
       setState(State.ERROR);
       setErrorDetails(friendlyError);
@@ -482,6 +554,7 @@ export default function Command() {
     setSkipSaveToHistory(false);
     setAutoActionStatus("idle");
     setSavedTranscriptionId(null);
+    setHasCachedRecording(false);
     autoActionExecutedRef.current = false;
   };
 
@@ -616,7 +689,7 @@ export default function Command() {
         const doneAutoAction = autoActionEnabled
           ? ` · 🔄 ${skipAutoAction ? `~~\`${doneAutoActionText}\`~~` : `\`${doneAutoActionText}\``}`
           : "";
-        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃E **Edit**`;
+        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃R **Re-run** · ⌃E **Edit**`;
 
       case State.ERROR:
         // error already contains formatted markdown with title, message, and suggestion
@@ -702,6 +775,14 @@ export default function Command() {
           <ActionPanel>
             <Action title="Paste" icon={Icon.Text} onAction={paste} />
             <Action title="Copy" icon={Icon.Clipboard} onAction={copy} shortcut={copyShortcut} />
+            {hasCachedRecording && (
+              <Action
+                title="Re-run Transcription"
+                icon={Icon.RotateClockwise}
+                shortcut={{ modifiers: ["ctrl"], key: "r" }}
+                onAction={rerunTranscription}
+              />
+            )}
             {DetailViewComponent && (
               <Action.Push
                 title="View Details"

@@ -131,3 +131,36 @@ export async function cancelBackendRecording(): Promise<void> {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
+
+/**
+ * Retranscribe the most recent cached recording without re-recording.
+ */
+export async function retranscribeLastRecording(): Promise<TranscriptionResult> {
+  const url = `${SERVER_URL}/record/retranscribe`;
+  try {
+    const response = await axios.post(url, null, { timeout: 600000 });
+    return response.data as TranscriptionResult;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const message = error.response?.data?.detail || error.message;
+      throw new Error(`Retranscription failed: ${message}`);
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+/**
+ * Explicitly clear any cached recording on the backend.
+ */
+export async function clearCachedRecording(): Promise<void> {
+  const url = `${SERVER_URL}/record/clear-cache`;
+  try {
+    await axios.post(url, null, { timeout: 5000 });
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const message = error.response?.data?.detail || error.message;
+      throw new Error(`Failed to clear cache: ${message}`);
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}

@@ -113,6 +113,13 @@ CHANNELS = 1
 MAX_RECORDING_SECONDS = 600  # Hard cap to avoid runaway memory use
 MAX_RECORDING_FRAMES = SAMPLE_RATE * MAX_RECORDING_SECONDS
 
+# Cached recording (post-transcription) so we can re-run without re-recording
+LAST_RECORDING_KEEP_SECONDS = 60.0
+last_recording_audio: Optional[np.ndarray] = None
+last_recording_overrun: bool = False
+last_recording_frames: int = 0
+last_recording_clear_timer: Optional[threading.Timer] = None
+
 recording_thread: Optional[threading.Thread] = None
 recording_stop_event: Optional[threading.Event] = None
 recording_start_time: Optional[float] = None
@@ -174,6 +181,43 @@ def _clear_audio_buffer():
         recording_audio_chunks = None
         recording_total_frames = 0
         recording_overrun = False
+
+
+def _clear_last_recording_audio():
+    """Discard cached audio from the last completed recording."""
+    global last_recording_audio, last_recording_overrun, last_recording_frames, last_recording_clear_timer
+
+    with recording_audio_lock:
+        last_recording_audio = None
+        last_recording_overrun = False
+        last_recording_frames = 0
+
+    if last_recording_clear_timer:
+        last_recording_clear_timer.cancel()
+        last_recording_clear_timer = None
+
+
+def _schedule_last_recording_clear():
+    """Schedule clearing the cached audio after the keepalive window."""
+    global last_recording_clear_timer
+
+    if last_recording_clear_timer:
+        last_recording_clear_timer.cancel()
+
+    timer = threading.Timer(LAST_RECORDING_KEEP_SECONDS, _clear_last_recording_audio)
+    timer.daemon = True
+    last_recording_clear_timer = timer
+    timer.start()
+
+
+def _store_last_recording_audio(audio_data: np.ndarray, total_frames: int, overrun: bool):
+    """Cache the most recent audio so it can be re-transcribed."""
+    global last_recording_audio, last_recording_overrun, last_recording_frames
+    with recording_audio_lock:
+        last_recording_audio = np.array(audio_data, dtype=np.float32, copy=True)
+        last_recording_overrun = overrun
+        last_recording_frames = total_frames
+    _schedule_last_recording_clear()
 
 
 def check_cuda_available() -> bool:
@@ -370,6 +414,8 @@ async def start_recording():
     if recording_thread is not None and recording_thread.is_alive():
         raise HTTPException(status_code=400, detail="Recording already in progress")
 
+    # Starting a new session invalidates any cached audio
+    _clear_last_recording_audio()
     _init_audio_buffer()
 
     # Reset audio level
@@ -444,6 +490,9 @@ async def stop_recording_and_transcribe():
 
         transcription = " ".join([segment.text for segment in segments])
 
+        # Cache the audio for potential re-run
+        _store_last_recording_audio(audio_data, total_frames, overrun)
+
         result = {
             "text": transcription.strip(),
             "language": info.language,
@@ -472,15 +521,69 @@ async def cancel_recording():
 
     _stop_recording_thread()
     _clear_audio_buffer()
+    _clear_last_recording_audio()
     recording_start_time = None
 
     logger.info("Recording cancelled and discarded")
     return {"status": "recording_cancelled"}
 
 
+@app.post("/record/retranscribe")
+async def retranscribe_cached_recording():
+    """Re-run transcription on the most recent cached audio without re-recording."""
+    if model is None:
+        raise HTTPException(status_code=503, detail=model_load_error or "Model not loaded")
+
+    with recording_audio_lock:
+        cached_audio = None if last_recording_audio is None else np.array(last_recording_audio, copy=True)
+
+    if cached_audio is None:
+        raise HTTPException(status_code=404, detail="No cached recording available")
+
+    try:
+        logger.info("Retranscribing cached audio")
+        segments, info = model.transcribe(
+            cached_audio,
+            beam_size=1,  # switch to sampling for variation
+            temperature=[0.2, 0.5, 0.8],
+            best_of=3,
+            language=None,
+            task="transcribe",
+        )
+
+        transcription = " ".join([segment.text for segment in segments])
+        duration = info.duration if hasattr(info, "duration") else float(len(cached_audio) / SAMPLE_RATE)
+
+        # Reset the expiry timer since the cache is actively used
+        _schedule_last_recording_clear()
+
+        return JSONResponse(
+            {
+                "text": transcription.strip(),
+                "language": info.language,
+                "language_probability": info.language_probability,
+                "duration": duration,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Retranscription failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Retranscription failed: {str(e)}")
+    finally:
+        gc.collect()
+
+
+@app.post("/record/clear-cache")
+async def clear_cached_recording():
+    """Explicitly clear any cached post-transcription audio."""
+    _clear_last_recording_audio()
+    logger.info("Cached recording cleared on request")
+    return {"status": "cache_cleared"}
+
+
 @app.post("/shutdown")
 async def shutdown():
     """Gracefully shutdown the server"""
+    _clear_last_recording_audio()
     logger.info("Shutdown requested")
     # Schedule shutdown after response is sent
     import asyncio
