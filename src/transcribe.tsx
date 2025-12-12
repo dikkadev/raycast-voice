@@ -101,6 +101,7 @@ type AutoActionStatus = "idle" | "pending" | "success" | "failure";
 
 export default function Command() {
   const copyShortcut: Keyboard.Shortcut = { modifiers: ["ctrl"], key: "c" };
+  const copyKeepOpenShortcut: Keyboard.Shortcut = { modifiers: ["ctrl", "shift"], key: "c" };
 
   const [state, setState] = useState<State>(State.IDLE);
   const [transcription, setTranscription] = useState("");
@@ -260,7 +261,7 @@ export default function Command() {
           if (autoAction === "paste") {
             await paste();
           } else if (autoAction === "copy") {
-            await copy();
+            await copyAndClose();
           }
           setAutoActionStatus("success");
           // Reset skip flag after execution
@@ -608,10 +609,15 @@ export default function Command() {
     }
   };
 
-  const copy = async () => {
+  const copyAndClose = async () => {
     await Clipboard.copy(transcription);
     await showToast({ style: Toast.Style.Success, title: "Copied" });
     await maybeReturnToRoot();
+  };
+
+  const copyKeepOpen = async () => {
+    await Clipboard.copy(transcription);
+    await showToast({ style: Toast.Style.Success, title: "Copied" });
   };
 
   const paste = async () => {
@@ -689,7 +695,7 @@ export default function Command() {
         const doneAutoAction = autoActionEnabled
           ? ` · 🔄 ${skipAutoAction ? `~~\`${doneAutoActionText}\`~~` : `\`${doneAutoActionText}\``}`
           : "";
-        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃R **Re-run** · ⌃E **Edit**`;
+        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n- ⏎ **Paste**\n- ⌃C **Copy & Close**\n- ⌃⇧C **Copy (Keep Open)**\n- ⌃R **Re-run**\n- ⌃E **Edit**`;
 
       case State.ERROR:
         // error already contains formatted markdown with title, message, and suggestion
@@ -773,8 +779,16 @@ export default function Command() {
 
         return (
           <ActionPanel>
-            <Action title="Paste" icon={Icon.Text} onAction={paste} />
-            <Action title="Copy" icon={Icon.Clipboard} onAction={copy} shortcut={copyShortcut} />
+            <ActionPanel.Section title="Output">
+              <Action title="Paste" icon={Icon.Text} onAction={paste} />
+              <Action
+                title="Copy (Keep Open)"
+                icon={Icon.Clipboard}
+                onAction={copyKeepOpen}
+                shortcut={copyKeepOpenShortcut}
+              />
+              <Action title="Copy & Close" icon={Icon.Clipboard} onAction={copyAndClose} shortcut={copyShortcut} />
+            </ActionPanel.Section>
             {hasCachedRecording && (
               <Action
                 title="Re-run Transcription"
