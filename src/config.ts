@@ -22,6 +22,7 @@ export interface TranscribePreferences {
   punctuationSpacing?: boolean;
   capitalizeFirst?: boolean;
   collapseRepeatedWords?: boolean;
+  revisionPrimer?: string;
 }
 
 /**
@@ -42,6 +43,7 @@ export function getConfig(): TranscribePreferences {
     punctuationSpacing: prefs.punctuationSpacing ?? true,
     capitalizeFirst: prefs.capitalizeFirst ?? false,
     collapseRepeatedWords: prefs.collapseRepeatedWords ?? false,
+    revisionPrimer: prefs.revisionPrimer,
   };
 }
 
@@ -101,6 +103,11 @@ export function isCapitalizeFirstEnabled(): boolean {
 export function isCollapseRepeatedWordsEnabled(): boolean {
   const cfg = getConfig();
   return cfg.collapseRepeatedWords ?? false;
+}
+
+export function getRevisionPrimer(): string {
+  const cfg = getConfig();
+  return cfg.revisionPrimer || "";
 }
 
 // Audio level polling rate (in milliseconds, 0 = disabled)

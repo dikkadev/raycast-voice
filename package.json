@@ -103,6 +103,14 @@
           "required": false
         },
         {
+          "name": "revisionPrimer",
+          "type": "textfield",
+          "title": "Revision Primer",
+          "description": "Instructions for the AI when revising text (e.g., 'You talk a lot about code & dev').",
+          "placeholder": "e.g. You are a helpful assistant who is an expert in code.",
+          "required": false
+        },
+        {
           "name": "collapseWhitespace",
           "type": "checkbox",
           "title": "Post-Processing Rules",

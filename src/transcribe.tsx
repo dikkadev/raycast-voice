@@ -13,6 +13,8 @@ import {
   useNavigation,
   launchCommand,
   LaunchType,
+  AI,
+  environment,
 } from "@raycast/api";
 import { useEffect, useState, useRef, useMemo } from "react";
 import {
@@ -26,7 +28,7 @@ import {
 } from "./transcription-client";
 import { ensureServerRunning, getServerStatus, restartServer, ServerStatus } from "./server-manager";
 import { processTranscription } from "./post-processing";
-import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory } from "./config";
+import { AUTO_START, WHISPER_MODEL, COMPUTE_DEVICE, RETURN_TO_ROOT, getAudioLevelPollingRate, getAutoAction, getSaveToHistory, getRevisionPrimer } from "./config";
 import { saveTranscription, getTranscriptionById } from "./history-storage";
 import { HistoryDetailView, calculatePerformanceRatio } from "./view-history";
 import { getUserFriendlyError, formatErrorForDisplay, UserFriendlyError } from "./error-handler";
@@ -39,6 +41,8 @@ enum State {
   PROCESSING = "processing",
   DONE = "done",
   ERROR = "error",
+  REVISION_RECORDING = "revision_recording",
+  REVISION_PROCESSING = "revision_processing",
 }
 
 const formatElapsed = (seconds: number) => {
@@ -122,6 +126,9 @@ export default function Command() {
   const [savedTranscriptionId, setSavedTranscriptionId] = useState<string | null>(null);
   const [hasCachedRecording, setHasCachedRecording] = useState(false);
   
+  // Check if AI API is accessible
+  const canAccessAI = environment.canAccess(AI);
+  
   // Memoize auto-action to prevent re-renders
   const autoAction = useMemo(() => getAutoAction(), []);
   const autoActionEnabled = autoAction !== "none";
@@ -147,7 +154,7 @@ export default function Command() {
   }, []);
 
   useEffect(() => {
-    if (state === State.RECORDING && recordingStart) {
+    if ((state === State.RECORDING || state === State.REVISION_RECORDING) && recordingStart) {
       recordingTimerRef.current = setInterval(() => {
         setRecordingElapsed((Date.now() - recordingStart) / 1000);
       }, 200);
@@ -166,7 +173,7 @@ export default function Command() {
 
   // Processing timer
   useEffect(() => {
-    if (state === State.PROCESSING && transcriptionStartTime) {
+    if ((state === State.PROCESSING || state === State.REVISION_PROCESSING) && transcriptionStartTime) {
       processingTimerRef.current = setInterval(() => {
         setProcessingElapsed((Date.now() - transcriptionStartTime) / 1000);
       }, 100);
@@ -187,7 +194,7 @@ export default function Command() {
   useEffect(() => {
     const pollingRate = getAudioLevelPollingRate();
     
-    if (state === State.RECORDING && pollingRate > 0) {
+    if ((state === State.RECORDING || state === State.REVISION_RECORDING) && pollingRate > 0) {
       const pollAudioLevel = async () => {
         try {
           const rawLevel = await getAudioLevel();
@@ -198,7 +205,7 @@ export default function Command() {
             // Keep only last WAVEFORM_BUFFER_SIZE samples
             return updated.slice(-WAVEFORM_BUFFER_SIZE);
           });
-        } catch (error) {
+        } catch {
           // Silently fail - audio level is optional
           setAudioLevelHistory((prev) => {
             const updated = [...prev, 0.0];
@@ -236,11 +243,12 @@ export default function Command() {
       state === State.CHECKING ||
       state === State.STARTING ||
       state === State.PROCESSING ||
+      state === State.REVISION_PROCESSING ||
       (state === State.DONE && autoActionActive && autoActionStatus !== "failure");
 
     if (shouldAnimate) {
       // Fast animation for processing (full clock revolution per second: 12 emojis / 1s = ~83ms)
-      const intervalMs = state === State.PROCESSING ? 80 : 500;
+      const intervalMs = (state === State.PROCESSING || state === State.REVISION_PROCESSING) ? 80 : 500;
       const interval = setInterval(() => {
         setAnimationTick((prev) => prev + 1);
       }, intervalMs);
@@ -302,7 +310,7 @@ export default function Command() {
 
   useEffect(() => {
     return () => {
-      if (activeStateRef.current === State.RECORDING) {
+      if (activeStateRef.current === State.RECORDING || activeStateRef.current === State.REVISION_RECORDING) {
         cancelBackendRecording()
           .catch((err) => {
             if (err instanceof CancelEndpointUnavailableError) {
@@ -441,6 +449,116 @@ export default function Command() {
       setError(formatErrorForDisplay(friendlyError));
       setTranscriptionStartTime(null);
       setProcessingElapsed(0);
+      await showToast({ 
+        style: Toast.Style.Failure, 
+        title: friendlyError.title, 
+        message: friendlyError.message 
+      });
+    }
+  };
+
+  const startRevision = async () => {
+    try {
+      setState(State.REVISION_RECORDING);
+      await ensureServerRunning();
+      
+      // Clear previous recording state if any
+      try {
+        await cancelBackendRecording();
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      setRecordingStart(Date.now());
+      setRecordingElapsed(0);
+      await startBackendRecording();
+      await showToast({ style: Toast.Style.Success, title: "Listening for instructions..." });
+    } catch (err) {
+      console.error("Failed to start revision:", err);
+      const friendlyError = getUserFriendlyError(err, "start");
+      setState(State.ERROR);
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
+      setRecordingStart(null);
+      await showToast({
+        style: Toast.Style.Failure,
+        title: friendlyError.title,
+        message: friendlyError.message
+      });
+    }
+  };
+
+  const stopRevision = async () => {
+    try {
+      const processingStart = Date.now();
+      setState(State.REVISION_PROCESSING);
+      setTranscriptionStartTime(processingStart);
+      setProcessingElapsed(0);
+      setRecordingStart(null);
+      setRecordingElapsed(0);
+      await showToast({ style: Toast.Style.Animated, title: "Transcribing instructions..." });
+
+      // 1. Get instruction text (transcribe normally)
+      const result = await stopRecordingAndTranscribe();
+      const instructionText = result.text;
+      
+      if (!instructionText || !instructionText.trim()) {
+         await showToast({ style: Toast.Style.Failure, title: "No instructions heard" });
+         setState(State.DONE); // Return to done without changes
+         setTranscriptionStartTime(null);
+         return;
+      }
+
+      await showToast({ style: Toast.Style.Animated, title: "Applying revision..." });
+
+      // 2. Call LLM
+      const primer = getRevisionPrimer();
+      const systemInstruction = `${primer ? primer + "\n\n" : ""}You are a helpful assistant. You are an expert in text revision and editing.
+You know the NATO Spelling Alphabet and should use it to interpret spelling instructions if provided.
+You will receive the original text and a set of spoken instructions for how to revise it.
+Apply the instructions to the original text.
+Output ONLY the final revised text. Do not include any explanations, preambles, or conversational text.`;
+      
+      const fullPrompt = `${systemInstruction}\n\nOriginal text:\n"${transcription}"\n\nInstructions:\n"${instructionText}"`;
+
+      try {
+        // Try to use Kimi K2 if available, otherwise let Raycast use its default model
+        const askOptions: { creativity: AI.Creativity; model?: AI.Model } = {
+          creativity: "low", // We want faithful execution of instructions
+        };
+        
+        // Attempt to use Kimi K2 model if available (requires newer Raycast version)
+        // If the model isn't available, Raycast will fallback to a similar one
+        if ("Groq_Kimi_K2_Instruct" in AI.Model) {
+          askOptions.model = AI.Model["Groq_Kimi_K2_Instruct"];
+        }
+        
+        const answer = await AI.ask(fullPrompt, askOptions);
+        
+        setTranscription(answer.trim());
+        setState(State.DONE);
+        await showToast({ style: Toast.Style.Success, title: "Revision complete" });
+        
+      } catch (aiErr) {
+        console.error("AI Revision failed:", aiErr);
+         await showToast({ 
+          style: Toast.Style.Failure, 
+          title: "AI Revision failed", 
+          message: aiErr instanceof Error ? aiErr.message : String(aiErr) 
+        });
+        setState(State.DONE); // Return to done state even if AI failed
+      }
+      
+      setTranscriptionStartTime(null);
+      setProcessingElapsed(0);
+
+    } catch (err) {
+      console.error("Revision failed:", err);
+      const friendlyError = getUserFriendlyError(err, "stop");
+      setState(State.ERROR);
+      setErrorDetails(friendlyError);
+      setError(formatErrorForDisplay(friendlyError));
+      setTranscriptionStartTime(null);
       await showToast({ 
         style: Toast.Style.Failure, 
         title: friendlyError.title, 
@@ -657,6 +775,12 @@ export default function Command() {
         
         return `## 🔴 ${recordingPhrase}\n\n### ${timerDisplay}\n\n\`${waveform}\`\n\nPress **Enter** to stop${recordingSkipIndicator}${recordingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${recordingAutoAction}`;
 
+      case State.REVISION_RECORDING:
+        const revWaveform = renderWaveform(audioLevelHistory);
+        const revTimer = recordingStart !== null ? formatElapsed(recordingElapsed) : "00:00";
+        const quotedTranscription = transcription.split("\n").map(line => `> ${line}`).join("\n");
+        return `## 🗣️ Listening for instructions...\n\n### ${revTimer}\n\n\`${revWaveform}\`\n\n**Original text:**\n${quotedTranscription}\n\nTell me how to change the text (e.g., "Make it more formal", "Replace X with Y")\n\nPress **Enter** to apply revision.`;
+
       case State.PROCESSING:
         const clockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
         const clockEmoji = clockEmojis[animationTick % clockEmojis.length];
@@ -669,6 +793,12 @@ export default function Command() {
           ? ` · 🔄 ${skipAutoAction ? `~~\`${processingAutoActionText}\`~~` : `\`${processingAutoActionText}\``}`
           : "";
         return `## ${clockEmoji} Processing${getAnimatedDots(animationTick, 6)}\n\n### ${processingTimer}\n\nTranscribing your audio...${processingSkipIndicator}${processingSaveDisabled}\n\n📦 \`${model}\` · ${deviceEmoji} \`${device}\`${processingAutoAction}`;
+
+      case State.REVISION_PROCESSING:
+        const revClockEmojis = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"];
+        const revClockEmoji = revClockEmojis[animationTick % revClockEmojis.length];
+        const revProcessingTimer = transcriptionStartTime ? formatElapsed(processingElapsed) : "00:00";
+        return `## ${revClockEmoji} Revising text${getAnimatedDots(animationTick, 6)}\n\n### ${revProcessingTimer}\n\nTranscribing instructions & applying AI revision...`;
 
       case State.DONE:
         if (autoActionActive && autoActionStatus !== "failure") {
@@ -689,7 +819,8 @@ export default function Command() {
         const doneAutoAction = autoActionEnabled
           ? ` · 🔄 ${skipAutoAction ? `~~\`${doneAutoActionText}\`~~` : `\`${doneAutoActionText}\``}`
           : "";
-        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃R **Re-run** · ⌃E **Edit**`;
+        const aiWarning = !canAccessAI ? "\n\n⚠️ *AI revision not available (Raycast Pro required)*" : "";
+        return `${transcription}\n\n─────────────────────\n\n⏱️ Audio: \`${audioTime}s\` · ⚡ Transcription: \`${transcriptionTime}s\`\n\n${languageEmoji} \`${language}\` · 📦 \`${model}\`${doneAutoAction}${aiWarning}\n\n⏎ **Paste** · ⌃C **Copy** · ⌃V **Revise** · ⌃R **Re-run** · ⌃E **Edit**`;
 
       case State.ERROR:
         // error already contains formatted markdown with title, message, and suggestion
@@ -743,6 +874,18 @@ export default function Command() {
           </ActionPanel>
         );
 
+      case State.REVISION_RECORDING:
+        return (
+          <ActionPanel>
+            <Action title="Stop & Apply Revision" icon={Icon.Check} onAction={stopRevision} />
+            <Action title="Cancel Revision" icon={Icon.XMarkCircle} onAction={() => {
+              cancelBackendRecording().catch(console.error);
+              setState(State.DONE);
+            }} />
+            {restartAction}
+          </ActionPanel>
+        );
+
       case State.PROCESSING:
         return (
           <ActionPanel>
@@ -766,15 +909,26 @@ export default function Command() {
           </ActionPanel>
         );
 
-      case State.DONE:
-        const DetailViewComponent = savedTranscriptionId ? (
-          <TranscriptionDetailViewWrapper transcriptionId={savedTranscriptionId} />
-        ) : null;
+      case State.REVISION_PROCESSING:
+        return (
+          <ActionPanel>
+            {restartAction}
+          </ActionPanel>
+        );
 
+      case State.DONE:
         return (
           <ActionPanel>
             <Action title="Paste" icon={Icon.Text} onAction={paste} />
             <Action title="Copy" icon={Icon.Clipboard} onAction={copy} shortcut={copyShortcut} />
+            {canAccessAI && (
+              <Action 
+                title="Revise Transcription" 
+                icon={Icon.Microphone} 
+                onAction={startRevision}
+                shortcut={{ modifiers: ["ctrl"], key: "v" }}
+              />
+            )}
             {hasCachedRecording && (
               <Action
                 title="Re-run Transcription"
@@ -783,11 +937,11 @@ export default function Command() {
                 onAction={rerunTranscription}
               />
             )}
-            {DetailViewComponent && (
+            {savedTranscriptionId && (
               <Action.Push
                 title="View Details"
                 icon={Icon.Eye}
-                target={DetailViewComponent}
+                target={<TranscriptionDetailViewWrapper transcriptionId={savedTranscriptionId} />}
                 shortcut={{ modifiers: ["ctrl"], key: "d" }}
               />
             )}
