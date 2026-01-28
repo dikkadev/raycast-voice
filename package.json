@@ -40,15 +40,16 @@
           "name": "whisperModel",
           "type": "dropdown",
           "title": "Whisper Model",
-          "description": "Model size affects accuracy and speed. Larger = more accurate but slower.",
-          "default": "base",
+          "description": "Model size affects accuracy and speed. Turbo recommended for best speed/quality balance.",
+          "default": "large-v3-turbo",
           "required": false,
           "data": [
+            { "title": "Turbo (recommended - fast, excellent quality)", "value": "large-v3-turbo" },
             { "title": "Tiny (fastest, least accurate)", "value": "tiny" },
             { "title": "Base (fast, good accuracy)", "value": "base" },
             { "title": "Small (balanced)", "value": "small" },
             { "title": "Medium (slower, better accuracy)", "value": "medium" },
-            { "title": "Large (slowest, best accuracy)", "value": "large-v3" }
+            { "title": "Large V3 (slowest, best accuracy)", "value": "large-v3" }
           ]
         },
         {

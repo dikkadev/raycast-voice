@@ -62,7 +62,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Whisper Transcription Server")
     parser.add_argument("--host", default="127.0.0.1", help="Server host")
     parser.add_argument("--port", type=int, default=51234, help="Server port")
-    parser.add_argument("--model", default="base", help="Whisper model size")
+    parser.add_argument("--model", default="large-v3-turbo", help="Whisper model size")
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"], help="Compute device")
     parser.add_argument("--compute-type", default=None, help="Compute type (auto-detected if not set)")
     return parser.parse_args()
@@ -71,9 +71,9 @@ def parse_args():
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 51234
-    model_size: str = "base"
+    model_size: str = "large-v3-turbo"
     device: str = "cuda"
-    compute_type: str = "float16"
+    compute_type: str = "int8_float16"
     
     @classmethod
     def from_args(cls, args):
@@ -85,7 +85,7 @@ class ServerConfig:
         if args.compute_type:
             cls.compute_type = args.compute_type
         else:
-            cls.compute_type = "float16" if args.device == "cuda" else "int8"
+            cls.compute_type = "int8_float16" if args.device == "cuda" else "int8"
         return cls
 
 config = ServerConfig()
@@ -102,7 +102,7 @@ app.add_middleware(
 )
 
 # Build identifier used by the Raycast extension to ensure backend/frontend compatibility
-SERVER_BUILD_ID = "2025-12-08-cpu-opt"
+SERVER_BUILD_ID = "2025-01-28-turbo-int8"
 
 # Global model and recording state
 model: Optional[WhisperModel] = None

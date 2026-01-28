@@ -33,7 +33,7 @@ export function getConfig(): TranscribePreferences {
     backendDirectory: prefs.backendDirectory,
     serverPort: prefs.serverPort || "51234",
     autoStart: prefs.autoStart ?? true,
-    whisperModel: prefs.whisperModel || "base",
+    whisperModel: prefs.whisperModel || "large-v3-turbo",
     computeDevice: prefs.computeDevice || "cuda",
     returnToRoot: prefs.returnToRoot ?? false,
     audioLevelPollingRate: prefs.audioLevelPollingRate || "150",
@@ -52,7 +52,7 @@ const config = getConfig();
 export const BACKEND_DIR = config.backendDirectory;
 
 // Backend/server build identifier (must stay in sync with Python backend)
-export const SERVER_BUILD_ID = "2025-12-08-cpu-opt";
+export const SERVER_BUILD_ID = "2025-01-28-turbo-int8";
 
 // Server configuration
 export const SERVER_HOST = "127.0.0.1";
@@ -60,7 +60,7 @@ export const SERVER_PORT = parsePort(config.serverPort);
 export const SERVER_URL = `http://${SERVER_HOST}:${SERVER_PORT}`;
 
 // Model and device settings
-export const WHISPER_MODEL = config.whisperModel || "base";
+export const WHISPER_MODEL = config.whisperModel || "large-v3-turbo";
 export const COMPUTE_DEVICE = config.computeDevice || "cuda";
 
 // Auto-start preference
@@ -142,9 +142,9 @@ export function getServerConfig(): ServerConfig {
   const cfg = getConfig();
   const device = cfg.computeDevice || "cuda";
   return {
-    model: cfg.whisperModel || "base",
+    model: cfg.whisperModel || "large-v3-turbo",
     device: device,
-    computeType: device === "cuda" ? "float16" : "int8",
+    computeType: device === "cuda" ? "int8_float16" : "int8",
     port: parsePort(cfg.serverPort),
   };
 }
